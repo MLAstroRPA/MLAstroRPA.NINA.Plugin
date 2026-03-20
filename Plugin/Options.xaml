@@ -1,0 +1,405 @@
+﻿<ResourceDictionary x:Class="MLAstro_Robotic_Polar_Alignment.Options"
+                    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <BooleanToVisibilityConverter x:Key="BoolToVisConverter" />
+
+    <DataTemplate x:Key="MLAstro Robotic Polar Alignment_Options">
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      Loaded="OnOptionsScrollViewerLoaded"
+                      PreviewMouseWheel="OnScrollViewerPreviewMouseWheel">
+            <StackPanel Margin="10">
+                <Expander Header="Connection" Margin="0,0,0,15" IsExpanded="True">
+                    <StackPanel Margin="10">
+                        <WrapPanel Margin="0,0,0,10">
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="COM Port" Margin="0,0,0,5" />
+                                <ComboBox ItemsSource="{Binding AvailableComPorts}"
+                                          SelectedItem="{Binding Settings.ComPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="Baud Rate" Margin="0,0,0,5" />
+                                <ComboBox ItemsSource="{Binding AvailableBaudRates}"
+                                          SelectedItem="{Binding Settings.BaudRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <WrapPanel Margin="0,0,0,10">
+                            <StackPanel Width="120" Margin="0,0,10,10">
+                                <TextBlock Text="Data Bits" Margin="0,0,0,5" />
+                                <TextBox Text="8" IsReadOnly="True" />
+                            </StackPanel>
+                            <StackPanel Width="120" Margin="0,0,10,10">
+                                <TextBlock Text="Parity" Margin="0,0,0,5" />
+                                <TextBox Text="None" IsReadOnly="True" />
+                            </StackPanel>
+                            <StackPanel Width="120" Margin="0,0,10,10">
+                                <TextBlock Text="Stop Bits" Margin="0,0,0,5" />
+                                <TextBox Text="One" IsReadOnly="True" />
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="Refresh Ports" Width="110" Margin="0,0,10,0" Command="{Binding RefreshComPortsCommand}" />
+                            <Button Content="{Binding SerialConnectButtonText}" Width="110" Margin="0,0,10,0" Command="{Binding ToggleSerialConnectionCommand}" />
+                            <TextBlock Text="{Binding AutoReconnectStatus}"
+                                       VerticalAlignment="Center"
+                                       Margin="10,0,0,0"
+                                       FontWeight="SemiBold"
+                                       Foreground="Blue" />
+                        </StackPanel>
+
+                        <TextBlock Text="{Binding SerialConnectionStatus}"
+                                   TextWrapping="Wrap"
+                                   Foreground="Gray"
+                                   FontSize="11"
+                                   Margin="0,0,0,4" />
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <TextBlock Text="Handshake: "
+                                       Foreground="Gray"
+                                       FontSize="11" />
+                            <TextBlock Text="{Binding SerialHandshakeStatus}"
+                                       Foreground="Gray"
+                                       FontSize="11" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <CheckBox IsChecked="{Binding IsPauseQuery, Mode=TwoWay}"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,8,0" />
+                            <TextBlock Text="Pause query '?'"
+                                       VerticalAlignment="Center"
+                                       FontSize="12" />
+                        </StackPanel>
+
+                        <TextBlock Text="Serial Terminal" Margin="0,0,0,5" />
+                        <RichTextBox Height="180"
+                                     Margin="0,0,0,10"
+                                     IsReadOnly="True"
+                                     IsReadOnlyCaretVisible="True"
+                                     Background="Transparent"
+                                     FontFamily="Consolas"
+                                     VerticalScrollBarVisibility="Auto"
+                                     PreviewMouseWheel="OnSerialTerminalPreviewMouseWheel"
+                                     Loaded="OnSerialTerminalLoaded">
+                            <RichTextBox.ContextMenu>
+                                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                             Background="White"
+                                             Foreground="White">
+                                    <MenuItem Header="Copy" Click="OnSerialTerminalCopyClick" />
+                                    <MenuItem Header="Clear" Command="{Binding ClearSerialTerminalCommand}" />
+                                    <MenuItem Header="Hex display"
+                                              IsCheckable="True"
+                                              IsChecked="{Binding IsHexDisplay, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </ContextMenu>
+                            </RichTextBox.ContextMenu>
+                        </RichTextBox>
+
+                        <DockPanel>
+                            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                                <CheckBox IsChecked="{Binding IsHexInputEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,5,0" />
+                                <TextBlock Text="Hex"
+                                           VerticalAlignment="Center"
+                                           FontSize="14"
+                                           Margin="0,0,10,0" />
+                                <Button Content="Send"
+                                        Width="90"
+                                        Command="{Binding SendSerialCommand}" />
+                            </StackPanel>
+                            <TextBox Text="{Binding SerialTerminalInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     MaxLength="{Binding SerialInputMaxLength}"
+                                     TextChanged="OnSerialTerminalInputTextChanged"
+                                     PreviewKeyDown="OnSerialTerminalInputPreviewKeyDown" />
+                        </DockPanel>
+                    </StackPanel>
+                </Expander>
+
+                <Expander Header="Soft Limits (Degrees)" Margin="0,0,0,15" IsExpanded="True"
+                          Visibility="{Binding IsHandshakeSuccessful, Converter={StaticResource BoolToVisConverter}}">
+                    <StackPanel Margin="10" IsEnabled="{Binding IsModifyMode}">
+                        <TextBlock Text="AZ Limits" FontWeight="SemiBold" Margin="0,0,0,8" />
+                        <WrapPanel Margin="0,0,0,10">
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="AZ Min" Margin="0,0,0,5" />
+                                <TextBox Text="{Binding Settings.LimitAzMin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="AZ Max" Margin="0,0,0,5" />
+                                <TextBox Text="{Binding Settings.LimitAzMax, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </WrapPanel>
+                        <TextBlock Text="ALT Limits" FontWeight="SemiBold" Margin="0,0,0,8" />
+                        <WrapPanel>
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="ALT Min" Margin="0,0,0,5" />
+                                <TextBox Text="{Binding Settings.LimitAltMin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="ALT Max" Margin="0,0,0,5" />
+                                <TextBox Text="{Binding Settings.LimitAltMax, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </WrapPanel>
+                    </StackPanel>
+                </Expander>
+
+                <Expander Header="Motor Driver (TMC2209)" Margin="0,0,0,15" IsExpanded="True"
+                          Visibility="{Binding IsHandshakeSuccessful, Converter={StaticResource BoolToVisConverter}}">
+                    <StackPanel Margin="10" IsEnabled="{Binding IsModifyMode}">
+                        <GroupBox Header="AZ Motor" Margin="0,0,0,10">
+                            <StackPanel Margin="10">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <CheckBox IsChecked="{Binding Settings.AzReverse, Mode=TwoWay}"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,8,0" />
+                                    <TextBlock Text="Reverse Direction"
+                                               VerticalAlignment="Center"
+                                               FontSize="14" />
+                                </StackPanel>
+                                <WrapPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Run Current (mA)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AzCurrentRun, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Hold Current (mA)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AzCurrentHold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Start-up Booster (%)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AzBooster, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Soft CoolStep (%)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AzCoolStep, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Microsteps" Margin="0,0,0,5" />
+                                        <ComboBox SelectedValue="{Binding Settings.AzMicrosteps, Mode=TwoWay}"
+                                                  SelectedValuePath="Tag">
+                                            <ComboBoxItem Content="1" Tag="1" />
+                                            <ComboBoxItem Content="2" Tag="2" />
+                                            <ComboBoxItem Content="4" Tag="4" />
+                                            <ComboBoxItem Content="8" Tag="8" />
+                                            <ComboBoxItem Content="16" Tag="16" />
+                                            <ComboBoxItem Content="32" Tag="32" />
+                                            <ComboBoxItem Content="64" Tag="64" />
+                                            <ComboBoxItem Content="128" Tag="128" />
+                                            <ComboBoxItem Content="256" Tag="256" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Accel (steps/sÂ²)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AzAccel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Decel (steps/sÂ²)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AzDecel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Steps/Degree" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AzStepsPerDegree, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Mode" Margin="0,0,0,5" />
+                                        <ComboBox SelectedValue="{Binding Settings.AzMode, Mode=TwoWay}"
+                                                  SelectedValuePath="Tag">
+                                            <ComboBoxItem Content="StealthChop" Tag="0" />
+                                            <ComboBoxItem Content="SpreadCycle" Tag="1" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="ALT Motor">
+                            <StackPanel Margin="10">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <CheckBox IsChecked="{Binding Settings.AltReverse, Mode=TwoWay}"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,8,0" />
+                                    <TextBlock Text="Reverse Direction"
+                                               VerticalAlignment="Center"
+                                               FontSize="14" />
+                                </StackPanel>
+                                <WrapPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Run Current (mA)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AltCurrentRun, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Hold Current (mA)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AltCurrentHold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Start-up Booster (%)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AltBooster, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Soft CoolStep (%)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AltCoolStep, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Microsteps" Margin="0,0,0,5" />
+                                        <ComboBox SelectedValue="{Binding Settings.AltMicrosteps, Mode=TwoWay}"
+                                                  SelectedValuePath="Tag">
+                                            <ComboBoxItem Content="1" Tag="1" />
+                                            <ComboBoxItem Content="2" Tag="2" />
+                                            <ComboBoxItem Content="4" Tag="4" />
+                                            <ComboBoxItem Content="8" Tag="8" />
+                                            <ComboBoxItem Content="16" Tag="16" />
+                                            <ComboBoxItem Content="32" Tag="32" />
+                                            <ComboBoxItem Content="64" Tag="64" />
+                                            <ComboBoxItem Content="128" Tag="128" />
+                                            <ComboBoxItem Content="256" Tag="256" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Accel (steps/sÂ²)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AltAccel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Decel (steps/sÂ²)" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AltDecel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Steps/Degree" Margin="0,0,0,5" />
+                                        <TextBox Text="{Binding Settings.AltStepsPerDegree, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Width="220" Margin="0,0,10,10">
+                                        <TextBlock Text="Mode" Margin="0,0,0,5" />
+                                        <ComboBox SelectedValue="{Binding Settings.AltMode, Mode=TwoWay}"
+                                                  SelectedValuePath="Tag">
+                                            <ComboBoxItem Content="StealthChop" Tag="0" />
+                                            <ComboBoxItem Content="SpreadCycle" Tag="1" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </WrapPanel>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </Expander>
+
+                <Expander Header="Anti Backlash from hardware" Margin="0,0,0,15" IsExpanded="True"
+                          Visibility="{Binding IsHandshakeSuccessful, Converter={StaticResource BoolToVisConverter}}">
+                    <StackPanel Margin="10" IsEnabled="{Binding IsModifyMode}">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <CheckBox IsChecked="{Binding Settings.BacklashEnabled, Mode=TwoWay}"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,8,0" />
+                            <TextBlock Text="Enable Anti Backlash from hardware"
+                                       VerticalAlignment="Center"
+                                       FontSize="14" />
+                        </StackPanel>
+                        <WrapPanel>
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="AZ Backlash (steps)" Margin="0,0,0,5" />
+                                <TextBox Text="{Binding Settings.BacklashAz, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                            <StackPanel Width="220" Margin="0,0,10,10">
+                                <TextBlock Text="ALT Backlash (steps)" Margin="0,0,0,5" />
+                                <TextBox Text="{Binding Settings.BacklashAlt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </WrapPanel>
+                    </StackPanel>
+                </Expander>
+
+                <Expander Header="WiFi Configuration" Margin="0,0,0,15" IsExpanded="True"
+                          Visibility="{Binding IsHandshakeSuccessful, Converter={StaticResource BoolToVisConverter}}">
+                    <StackPanel Margin="10" IsEnabled="{Binding IsModifyMode}">
+                        <GroupBox Header="Access Point (Hotspot)" Margin="0,0,0,10">
+                            <WrapPanel Margin="10">
+                                <StackPanel Width="220" Margin="0,0,10,10">
+                                    <TextBlock Text="AP SSID" Margin="0,0,0,5" />
+                                    <TextBox Text="{Binding Settings.ApSsid, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel Width="220" Margin="0,0,10,10">
+                                    <TextBlock Text="AP Password" Margin="0,0,0,5" />
+                                    <TextBox Text="{Binding Settings.ApPass, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel Width="220" Margin="0,0,10,10">
+                                    <TextBlock Text="AP IP Address" Margin="0,0,0,5" />
+                                    <TextBox Text="{Binding Settings.ApIp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel Width="220" Margin="0,0,10,10">
+                                    <TextBlock Text="Subnet Mask" Margin="0,0,0,5" />
+                                    <TextBox Text="{Binding Settings.ApSubnet, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                            </WrapPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Station Mode (Connect to Router)">
+                            <WrapPanel Margin="10">
+                                <StackPanel Width="220" Margin="0,0,10,10">
+                                    <TextBlock Text="WiFi SSID" Margin="0,0,0,5" />
+                                    <TextBox Text="{Binding Settings.WifiSsid, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel Width="220" Margin="0,0,10,10">
+                                    <TextBlock Text="WiFi Password" Margin="0,0,0,5" />
+                                    <TextBox Text="{Binding Settings.WifiPass, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <StackPanel Width="220" Margin="0,0,10,10">
+                                    <TextBlock Text="Current STA Mode IP" Margin="0,0,0,5" />
+                                    <TextBox Text="{Binding Settings.WifiIp, Mode=TwoWay}"
+                                             IsReadOnly="True" />
+                                </StackPanel>
+                            </WrapPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Configuration Control Buttons -->
+                <Border Padding="10" Margin="0,0,0,15" CornerRadius="5"
+                        Visibility="{Binding IsHandshakeSuccessful, Converter={StaticResource BoolToVisConverter}}">
+                    <StackPanel>
+                        <ToggleButton IsChecked="{Binding IsModifyMode, Mode=TwoWay}"
+                                      HorizontalAlignment="Left"
+                                      FontWeight="Bold"
+                                      FontSize="12">
+                            <ToggleButton.Style>
+                                <Style TargetType="ToggleButton">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ToggleButton">
+                                                <Border x:Name="border"
+                                                        BorderThickness="2"
+                                                        BorderBrush="#0078D4"
+                                                        CornerRadius="4"
+                                                        Background="Transparent"
+                                                        Padding="10,5">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                        <TextBlock x:Name="icon" Text="✏️" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                                        <TextBlock x:Name="text" Text="EDIT SETTINGS" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsChecked" Value="True">
+                                                        <Setter TargetName="border" Property="Background" Value="#0078D4" />
+                                                        <Setter TargetName="border" Property="BorderBrush" Value="#0078D4" />
+                                                        <Setter TargetName="text" Property="Text" Value="SAVE ALL SETTINGS &amp; REBOOT HARDWARE" />
+                                                        <Setter TargetName="text" Property="Foreground" Value="White" />
+                                                        <Setter TargetName="icon" Property="Text" Value="💾" />
+                                                        <Setter TargetName="icon" Property="Foreground" Value="White" />
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="border" Property="Opacity" Value="0.85" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ToggleButton.Style>
+                        </ToggleButton>
+                        <TextBlock Text="⚠️ Click to enable editing. Click again to save changes and reboot device."
+                                   TextWrapping="Wrap"
+                                   Foreground="DarkOrange"
+                                   FontSize="11"
+                                   Margin="0,8,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DataTemplate>
+</ResourceDictionary>

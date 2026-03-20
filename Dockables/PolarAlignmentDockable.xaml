@@ -1,0 +1,582 @@
+<UserControl x:Class="MLAstro_Robotic_Polar_Alignment.Dockables.PolarAlignmentDockable"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:MLAstro_Robotic_Polar_Alignment.Converters">
+
+    <UserControl.Resources>
+        <converters:SpeedLevelToBoolConverter x:Key="SpeedLevelToBoolConverter"/>
+
+        <!-- Speed Button Style -->
+        <Style x:Key="SpeedButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="50"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="0,0,5,0"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="#3498DB"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#3498DB"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" 
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#2980B9"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <!-- Selected state styling via DataTrigger -->
+                <DataTrigger Value="True">
+                    <DataTrigger.Binding>
+                        <MultiBinding Converter="{StaticResource SpeedLevelToBoolConverter}">
+                            <Binding Path="CurrentSpeed"/>
+                            <Binding Path="CommandParameter" RelativeSource="{RelativeSource Self}"/>
+                        </MultiBinding>
+                    </DataTrigger.Binding>
+                    <Setter Property="Background" Value="#3498DB"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Movement Button Style with Press Effect -->
+        <Style x:Key="MovementButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="80"/>
+            <Setter Property="Height" Value="60"/>
+            <Setter Property="Background" Value="#34495E"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="#5D6D7E"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" 
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#4A6278"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#7F8C8D"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#2ECC71"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#27AE60"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Stop Button Style with Press Effect -->
+        <Style x:Key="StopButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="80"/>
+            <Setter Property="Height" Value="80"/>
+            <Setter Property="Background" Value="OrangeRed"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="#E74C3C"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" 
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#E74C3C"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#C0392B"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#922B21"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Force Stop Button Style with Press Effect -->
+        <Style x:Key="ForceStopButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="DarkRed"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="#8B0000"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" 
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#B22222"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#CD5C5C"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#FF0000"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#FFD700"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel>
+        <!-- HEADER - Fixed at top -->
+        <Border DockPanel.Dock="Top" 
+                Background="#2C3E50" 
+                Padding="10,8"
+                BorderBrush="#34495E"
+                BorderThickness="0,0,0,2">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Brand Info -->
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="MLAstro RPA" 
+                               FontSize="18" 
+                               FontWeight="Bold" 
+                               Foreground="White"/>
+                    <TextBlock Text="Robotic Polar Alignment" 
+                               FontSize="11" 
+                               Foreground="#BDC3C7"
+                               Margin="0,2,0,0"/>
+                </StackPanel>
+
+                <!-- Status Info -->
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                        <TextBlock Text="Status:" 
+                                   Foreground="#BDC3C7" 
+                                   Margin="0,0,5,0"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding SystemStatus}" 
+                                   FontWeight="Bold"
+                                   Foreground="{Binding StatusForeground}"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Connection:" 
+                                   Foreground="#BDC3C7" 
+                                   Margin="0,0,5,0"
+                                   VerticalAlignment="Center"/>
+                        <Ellipse Width="12" 
+                                 Height="12" 
+                                 Fill="{Binding ConnectionStatusColor}"
+                                 ToolTip="{Binding ConnectionStatusText}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Force Stop Button in Header -->
+                <Button Grid.Column="2" 
+                        Style="{StaticResource ForceStopButtonStyle}"
+                        Width="80" 
+                        Height="45"
+                        FontSize="11"
+                        ToolTip="FORCE STOP (Emergency)"
+                        Command="{Binding ForceStopCommand}">
+                    <TextBlock Text="FORCE&#x0a;STOP" TextAlignment="Center"/>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- CONTENT - Scrollable -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="10">
+
+            <!-- Manual Movement Control -->
+            <Expander Header="🕹️ Manual Movement" IsExpanded="True" Margin="0,0,0,10"
+                      Visibility="{Binding ControlsVisibility}">
+                <StackPanel Margin="10">
+                    <!-- Speed Level -->
+                    <TextBlock Text="Speed Level:" FontWeight="SemiBold" Margin="0,0,0,5" HorizontalAlignment="Center"/>
+                    <WrapPanel Margin="0,0,0,15" HorizontalAlignment="Center">
+                        <Button Content="1" Style="{StaticResource SpeedButtonStyle}" Command="{Binding SetSpeedCommand}" CommandParameter="1" IsEnabled="{Binding CanManualControl}"/>
+                        <Button Content="2" Style="{StaticResource SpeedButtonStyle}" Command="{Binding SetSpeedCommand}" CommandParameter="2" IsEnabled="{Binding CanManualControl}"/>
+                        <Button Content="3" Style="{StaticResource SpeedButtonStyle}" Command="{Binding SetSpeedCommand}" CommandParameter="3" IsEnabled="{Binding CanManualControl}"/>
+                        <Button Content="4" Style="{StaticResource SpeedButtonStyle}" Command="{Binding SetSpeedCommand}" CommandParameter="4" IsEnabled="{Binding CanManualControl}"/>
+                        <Button Content="5" Style="{StaticResource SpeedButtonStyle}" Command="{Binding SetSpeedCommand}" CommandParameter="5" IsEnabled="{Binding CanManualControl}"/>
+                    </WrapPanel>
+
+                    <!-- Control Mode Toggle -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10" HorizontalAlignment="Center">
+                        <TextBlock Text="Jog (Hold)" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <CheckBox IsChecked="{Binding IsRelativeMode, Mode=TwoWay}" 
+                                  VerticalAlignment="Center" 
+                                  Margin="0,0,10,0"
+                                  IsEnabled="{Binding CanManualControl}"/>
+                        <TextBlock Text="Relative (Step)" VerticalAlignment="Center" FontWeight="Bold"/>
+                    </StackPanel>
+
+                    <!-- Relative Steps (visible only in Relative mode) -->
+                    <Border BorderBrush="Gray" BorderThickness="1" Padding="10" Margin="0,0,0,15"
+                            Visibility="{Binding RelativeOptionsVisibility}"
+                            HorizontalAlignment="Center">
+                        <WrapPanel>
+                            <!-- Degrees -->
+                            <StackPanel Margin="0,0,15,0">
+                                <TextBlock Text="Degrees" HorizontalAlignment="Center" FontSize="11" Margin="0,0,0,5"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="-" Width="30" 
+                                            PreviewMouseDown="OnRelativeDegreesDecDown" 
+                                            PreviewMouseUp="OnRelativeDegreesButtonUp"
+                                            IsEnabled="{Binding CanManualControl}"/>
+                                    <TextBlock Text="{Binding RelativeDegrees}" 
+                                               Width="40" 
+                                               TextAlignment="Center" 
+                                               VerticalAlignment="Center"
+                                               FontSize="16"
+                                               FontWeight="Bold"
+                                               Margin="5,0"/>
+                                    <TextBlock Text="°" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                    <Button Content="+" Width="30" 
+                                            PreviewMouseDown="OnRelativeDegreesIncDown" 
+                                            PreviewMouseUp="OnRelativeDegreesButtonUp"
+                                            IsEnabled="{Binding CanManualControl}"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Minutes -->
+                            <StackPanel Margin="0,0,15,0">
+                                <TextBlock Text="Minutes" HorizontalAlignment="Center" FontSize="11" Margin="0,0,0,5"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="-" Width="30" 
+                                            PreviewMouseDown="OnRelativeMinutesDecDown" 
+                                            PreviewMouseUp="OnRelativeMinutesButtonUp"
+                                            IsEnabled="{Binding CanManualControl}"/>
+                                    <TextBlock Text="{Binding RelativeMinutes}" 
+                                               Width="40" 
+                                               TextAlignment="Center" 
+                                               VerticalAlignment="Center"
+                                               FontSize="16"
+                                               FontWeight="Bold"
+                                               Margin="5,0"/>
+                                    <TextBlock Text="'" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                    <Button Content="+" Width="30" 
+                                            PreviewMouseDown="OnRelativeMinutesIncDown" 
+                                            PreviewMouseUp="OnRelativeMinutesButtonUp"
+                                            IsEnabled="{Binding CanManualControl}"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Seconds -->
+                            <StackPanel>
+                                <TextBlock Text="Seconds" HorizontalAlignment="Center" FontSize="11" Margin="0,0,0,5"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="-" Width="30" 
+                                            PreviewMouseDown="OnRelativeSecondsDecDown" 
+                                            PreviewMouseUp="OnRelativeSecondsButtonUp"
+                                            IsEnabled="{Binding CanManualControl}"/>
+                                    <TextBlock Text="{Binding RelativeSeconds}" 
+                                               Width="40" 
+                                               TextAlignment="Center" 
+                                               VerticalAlignment="Center"
+                                               FontSize="16"
+                                               FontWeight="Bold"
+                                               Margin="5,0"/>
+                                    <TextBlock Text='"' VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                    <Button Content="+" Width="30" 
+                                            PreviewMouseDown="OnRelativeSecondsIncDown" 
+                                            PreviewMouseUp="OnRelativeSecondsButtonUp"
+                                            IsEnabled="{Binding CanManualControl}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </WrapPanel>
+                    </Border>
+
+                    <!-- Directional Pad -->
+                    <Grid Width="280" Height="280" Margin="0,0,0,15" HorizontalAlignment="Center">
+                        <!-- Up Button -->
+                        <Button Content="▲ Alt" 
+                                Style="{StaticResource MovementButtonStyle}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Top"
+                                PreviewMouseDown="OnMoveUpDown"
+                                PreviewMouseUp="OnMoveUpUp"
+                                MouseLeave="OnMoveUpUp"
+                                IsEnabled="{Binding CanManualControl}"/>
+
+                        <!-- Left Button -->
+                        <Button Content="◄ Az" 
+                                Style="{StaticResource MovementButtonStyle}"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center"
+                                PreviewMouseDown="OnMoveLeftDown"
+                                PreviewMouseUp="OnMoveLeftUp"
+                                MouseLeave="OnMoveLeftUp"
+                                IsEnabled="{Binding CanManualControl}"/>
+
+                        <!-- Stop Button -->
+                        <Button Content="⏹ STOP" 
+                                Style="{StaticResource StopButtonStyle}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Command="{Binding StopCommand}"/>
+
+                        <!-- Right Button -->
+                        <Button Content="► Az" 
+                                Style="{StaticResource MovementButtonStyle}"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                PreviewMouseDown="OnMoveRightDown"
+                                PreviewMouseUp="OnMoveRightUp"
+                                MouseLeave="OnMoveRightUp"
+                                IsEnabled="{Binding CanManualControl}"/>
+
+                        <!-- Down Button -->
+                        <Button Content="▼ Alt" 
+                                Style="{StaticResource MovementButtonStyle}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Bottom"
+                                PreviewMouseDown="OnMoveDownDown"
+                                PreviewMouseUp="OnMoveDownUp"
+                                MouseLeave="OnMoveDownUp"
+                                IsEnabled="{Binding CanManualControl}"/>
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
+            <!-- Position Display -->
+            <Expander Header="📐 Position" IsExpanded="True" Margin="0,0,0,10"
+                      Visibility="{Binding ControlsVisibility}">
+                <StackPanel Margin="10">
+                    <!-- Azimuth Position -->
+                    <TextBlock Text="Azimuth (from home):" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                    <TextBlock Text="{Binding AzPosition}" FontSize="18" FontWeight="Bold" Margin="0,0,0,5"/>
+
+                    <!-- Altitude Position -->
+                    <TextBlock Text="Altitude (from home):" FontWeight="SemiBold" Margin="0,15,0,5"/>
+                    <TextBlock Text="{Binding AltPosition}" FontSize="18" FontWeight="Bold" Margin="0,0,0,5"/>
+
+                    <!-- Homed Status -->
+                    <TextBlock Margin="0,15,0,10">
+                        <Run Text="🏠 Homed:"/>
+                        <Run Text="{Binding HomedStatus}" FontWeight="Bold"/>
+                    </TextBlock>
+
+                    <!-- Home Buttons -->
+                    <WrapPanel Margin="0,0,0,0">
+                        <Button Content="🏠 SET HOME HERE" 
+                                Width="150" 
+                                Margin="0,0,5,5"
+                                Command="{Binding SetHomeCommand}"
+                                IsEnabled="{Binding CanManualControl}"/>
+                        <Button Content="↻ RETURN TO HOME" 
+                                Width="150" 
+                                Margin="0,0,5,5"
+                                Command="{Binding ReturnHomeCommand}"
+                                IsEnabled="{Binding CanManualControl}"/>
+                        <Button Content="⚠️ RESET HOME" 
+                                Width="150" 
+                                Margin="0,0,5,5"
+                                Background="DarkOrange"
+                                Foreground="White"
+                                Command="{Binding ResetHomeCommand}"
+                                IsEnabled="{Binding CanManualControl}"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Expander>
+
+            <!-- Polar Alignment -->
+            <Expander Header="🎯 Polar Alignment" IsExpanded="True" Margin="0,0,0,10"
+                      Visibility="{Binding ControlsVisibility}">
+                <StackPanel Margin="10">
+                    <!-- Moved Position Display -->
+                    <Border Background="#2C3E50" CornerRadius="4" Padding="10" Margin="0,0,0,15">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Az Moved -->
+                            <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                <TextBlock Text="Az Moved" 
+                                           FontSize="11" 
+                                           Foreground="#BDC3C7" 
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="{Binding AzMovedPosition}" 
+                                           FontSize="16" 
+                                           FontWeight="Bold" 
+                                           Foreground="White"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Alt Moved -->
+                            <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                                <TextBlock Text="Alt Moved" 
+                                           FontSize="11" 
+                                           Foreground="#BDC3C7" 
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="{Binding AltMovedPosition}" 
+                                           FontSize="16" 
+                                           FontWeight="Bold" 
+                                           Foreground="White"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Control Bar: Automated Adjustment Toggle + Modify Button -->
+                    <Border Background="#34495E" CornerRadius="4" Padding="10" Margin="0,0,0,15">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Automated Adjustment Toggle -->
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="🤖 Do Automated Adjustment" 
+                                           VerticalAlignment="Center" 
+                                           Foreground="#BDC3C7"
+                                           Margin="0,0,10,0"/>
+                                <CheckBox IsChecked="{Binding IsAutomatedAdjustment, Mode=TwoWay}" 
+                                          VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Modify Button -->
+                            <Button Grid.Column="1" 
+                                    Command="{Binding ToggleModifyCommand}"
+                                    Width="100" 
+                                    Height="28"
+                                    IsEnabled="{Binding CanModify}">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Content" Value="✏️ Modify"/>
+                                        <Setter Property="Background" Value="#3498DB"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsAlignmentModifyMode}" Value="True">
+                                                <Setter Property="Content" Value="✅ Done"/>
+                                                <Setter Property="Background" Value="LimeGreen"/>
+                                                <Setter Property="Foreground" Value="Black"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <!-- Az Error Input -->
+                    <TextBlock Text="Az Error:" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                    <WrapPanel Margin="0,0,0,10">
+                        <TextBox Text="{Binding AzErrorDeg, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                 Width="60" 
+                                 Margin="0,0,5,0"
+                                 IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text="°" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBox Text="{Binding AzErrorMin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                 Width="60" 
+                                 Margin="0,0,5,0"
+                                 IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text="'" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBox Text="{Binding AzErrorSec, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                 Width="60" 
+                                 Margin="0,0,5,0"
+                                 IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text='"' VerticalAlignment="Center"/>
+                    </WrapPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,15">
+                        <TextBlock Text="Left" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <CheckBox IsChecked="{Binding AzErrorRight, Mode=TwoWay}" 
+                                  VerticalAlignment="Center" 
+                                  Margin="0,0,10,0"
+                                  IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text="Right" VerticalAlignment="Center" Margin="0,0,20,0"/>
+                        <Button Content="Align Az" 
+                                Width="100"
+                                Command="{Binding AlignAzCommand}"
+                                IsEnabled="{Binding CanAlign}"/>
+                    </StackPanel>
+
+                    <!-- Alt Error Input -->
+                    <TextBlock Text="Alt Error:" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                    <WrapPanel Margin="0,0,0,10">
+                        <TextBox Text="{Binding AltErrorDeg, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                 Width="60" 
+                                 Margin="0,0,5,0"
+                                 IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text="°" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBox Text="{Binding AltErrorMin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                 Width="60" 
+                                 Margin="0,0,5,0"
+                                 IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text="'" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBox Text="{Binding AltErrorSec, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                 Width="60" 
+                                 Margin="0,0,5,0"
+                                 IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text='"' VerticalAlignment="Center"/>
+                    </WrapPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,15">
+                        <TextBlock Text="Down" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <CheckBox IsChecked="{Binding AltErrorUp, Mode=TwoWay}" 
+                                  VerticalAlignment="Center" 
+                                  Margin="0,0,10,0"
+                                  IsEnabled="{Binding IsAlignmentModifyMode}"/>
+                        <TextBlock Text="Up" VerticalAlignment="Center" Margin="0,0,20,0"/>
+                        <Button Content="Align Alt" 
+                                Width="100"
+                                Command="{Binding AlignAltCommand}"
+                                IsEnabled="{Binding CanAlign}"/>
+                    </StackPanel>
+
+                    <!-- Align All Button -->
+                    <Button Content="✓ ALIGN ALL" 
+                            Height="40"
+                            Background="Green"
+                            Foreground="White"
+                            IsEnabled="{Binding CanAlign}"
+                            FontWeight="Bold"
+                            FontSize="16"
+                            Command="{Binding AlignAllCommand}"/>
+                </StackPanel>
+            </Expander>
+
+        </StackPanel>
+    </ScrollViewer>
+    </DockPanel>
+</UserControl>
