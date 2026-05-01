@@ -52,12 +52,13 @@ This plugin allows you to:
 ### Step 2: Install the Plugin
 
 **Method A: Manual Installation**
-1. Locate your N.I.N.A plugins folder:
-   - Default path: `%LOCALAPPDATA%\NINA\Plugins\`
-   - Or: `C:\Users\<YourUsername>\AppData\Local\NINA\Plugins\`
-2. Create a new folder named `MLAstro_Robotic_Polar_Alignment`
-3. Copy the downloaded `.dll` file into this folder
-4. Restart N.I.N.A
+1. Close N.I.N.A
+2. Locate your N.I.N.A plugins folder:
+   - Default path: `%LOCALAPPDATA%\NINA\Plugins\3.0.0\`
+   - Or: `C:\Users\<YourUsername>\AppData\Local\NINA\Plugins\3.0.0\`
+3. Create a new folder named `MLAstro_Robotic_Polar_Alignment` and `Three Point Polar Alignment`
+4. Copy the downloaded `.dll` file into each folder
+5. Restart N.I.N.A
 
 **Method B: Via N.I.N.A Plugin Manager**
 1. Open N.I.N.A
