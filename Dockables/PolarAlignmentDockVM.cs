@@ -13,7 +13,7 @@ using MLAstro_Robotic_Polar_Alignment.Services;
 
 namespace MLAstro_Robotic_Polar_Alignment.Dockables
 { 
-    [Export(typeof(IDockableVM))]
+    [Export]
     [PartCreationPolicy(CreationPolicy.Shared)]
     public class PolarAlignmentDockVM : DockableVM, IDisposable
     { 
@@ -82,6 +82,9 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         // Flag to pause telemetry sync for relative values when user is editing
         private bool _isEditingRelativeValues = false;
 
+        // Flag to pause telemetry sync for alignment error fields when the user is editing
+        private bool _isEditingAlignment = false;
+
         public override string ContentId => "MLAstro_Robotic_Polar_Alignment";
 
         #region Header Properties
@@ -106,6 +109,10 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                 if (SetProperty(ref _systemStatus, value))
                 {
                     UpdateStatusColor();
+                    OnPropertyChanged(nameof(CanManualControl));
+                    OnPropertyChanged(nameof(CanAutomaticControl));
+                    OnPropertyChanged(nameof(CanAlign));
+                    CommandManager.InvalidateRequerySuggested();
                 }
             }
         }
@@ -412,6 +419,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                     OnPropertyChanged(nameof(CanModify));
                     OnPropertyChanged(nameof(CanAlign));
                     OnPropertyChanged(nameof(CanManualControl));
+                    OnPropertyChanged(nameof(CanAutomaticControl));
                     Logger.Info($"[MLAstro] Automated adjustment mode: {(value ? "ON" : "OFF")}");
                 }
             }
@@ -423,15 +431,26 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         public bool CanModify => !_isAutomatedAdjustment;
 
         /// <summary>
-        /// Returns true if Align buttons should be enabled (not in automated mode)
+        /// Returns true while firmware telemetry reports manual movement or an idle state.
+        /// Automated workflows own both axes and therefore disable every movement start control.
         /// </summary>
-        public bool CanAlign => !_isAutomatedAdjustment;
+        public bool CanManualControl => !_isAutomatedAdjustment && !IsAutomaticMotion;
 
         /// <summary>
-        /// Returns true if manual controls should be enabled (not in automated mode)
-        /// Affects: movement buttons, speed level buttons, relative controls, set home, return home
+        /// Returns true only when the firmware reports both motors are idle.
+        /// Manual MOVING telemetry permits manual control but prevents starting an automatic workflow.
         /// </summary>
-        public bool CanManualControl => !_isAutomatedAdjustment;
+        public bool CanAutomaticControl => !_isAutomatedAdjustment && !IsMotionActive;
+
+        public bool CanAlign => CanAutomaticControl;
+
+        private bool IsAutomaticMotion => SystemStatus.Equals("HOMING", StringComparison.OrdinalIgnoreCase) ||
+                          SystemStatus.Equals("ALIGNING", StringComparison.OrdinalIgnoreCase) ||
+                          SystemStatus.Equals("CALIBRATING", StringComparison.OrdinalIgnoreCase) ||
+                          SystemStatus.Equals("TUNING", StringComparison.OrdinalIgnoreCase);
+
+        private bool IsMotionActive => IsAutomaticMotion ||
+                           SystemStatus.Equals("MOVING", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Send all alignment settings to hardware in one command
@@ -452,6 +471,22 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         private void OnToggleModify()
         {
             IsAlignmentModifyMode = !IsAlignmentModifyMode;
+        }
+
+        /// <summary>
+        /// Start editing alignment values - pause telemetry sync for these fields.
+        /// </summary>
+        public void StartEditingAlignment()
+        {
+            _isEditingAlignment = true;
+        }
+
+        /// <summary>
+        /// End editing alignment values - resume telemetry sync for these fields.
+        /// </summary>
+        public void EndEditingAlignment()
+        {
+            _isEditingAlignment = false;
         }
 
         #endregion
@@ -543,6 +578,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             _serialService.TelemetryDataReceived += OnTelemetryDataReceived;
             _serialService.CompletionReceived += OnCompletionReceived;
 
+            FirmwareVersion = _serialService.FirmwareVersion;
+
             Logger.Info($"[MLAstro] ViewModel subscribed to SerialConnectionService singleton (instance: {_serialService.GetHashCode()})");
         }
 
@@ -595,22 +632,19 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                 OnPropertyChanged(nameof(IsRelativeMode));
             }
 
-            // Update relative values (skip if user is editing)
+            // Update relative values only when changed (skip if user is editing)
             if (e.Data.IsRelativeMode && !_isEditingRelativeValues)
             {
-                _relativeDegrees = e.Data.RelativeDegrees;
-                _relativeMinutes = e.Data.RelativeMinutes;
-                _relativeSeconds = e.Data.RelativeSeconds;
-                OnPropertyChanged(nameof(RelativeDegrees));
-                OnPropertyChanged(nameof(RelativeMinutes));
-                OnPropertyChanged(nameof(RelativeSeconds));
+                RelativeDegrees = e.Data.RelativeDegrees;
+                RelativeMinutes = e.Data.RelativeMinutes;
+                RelativeSeconds = e.Data.RelativeSeconds;
             }
 
             // Update homed status from hardware (Read-Only)
             HomedStatus = e.Data.IsHomed ? "Yes" : "No";
 
-            // Skip alignment sync if modify mode is ON OR automated adjustment is ON
-            if (!_isAlignmentModifyMode && !_isAutomatedAdjustment)
+            // Skip alignment sync if the user is editing OR modify mode is ON OR automated adjustment is ON
+            if (!_isEditingAlignment && !_isAlignmentModifyMode && !_isAutomatedAdjustment)
             {
                 // Sync alignment directions from hardware (using flag to prevent sending command back)
                 _isSyncingFromTelemetry = true;
@@ -625,19 +659,13 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                     _isSyncingFromTelemetry = false;
                 }
 
-                // Sync alignment error values from hardware
-                _azErrorDeg = e.Data.AzErrorDegrees;
-                _azErrorMin = e.Data.AzErrorMinutes;
-                _azErrorSec = e.Data.AzErrorSeconds;
-                _altErrorDeg = e.Data.AltErrorDegrees;
-                _altErrorMin = e.Data.AltErrorMinutes;
-                _altErrorSec = e.Data.AltErrorSeconds;
-                OnPropertyChanged(nameof(AzErrorDeg));
-                OnPropertyChanged(nameof(AzErrorMin));
-                OnPropertyChanged(nameof(AzErrorSec));
-                OnPropertyChanged(nameof(AltErrorDeg));
-                OnPropertyChanged(nameof(AltErrorMin));
-                OnPropertyChanged(nameof(AltErrorSec));
+                // Sync alignment error values from hardware (only notifies UI when the value changes)
+                AzErrorDeg = e.Data.AzErrorDegrees;
+                AzErrorMin = e.Data.AzErrorMinutes;
+                AzErrorSec = e.Data.AzErrorSeconds;
+                AltErrorDeg = e.Data.AltErrorDegrees;
+                AltErrorMin = e.Data.AltErrorMinutes;
+                AltErrorSec = e.Data.AltErrorSeconds;
             }
 
             // Update steps display (calculate from position in degrees and steps/degree)
@@ -701,6 +729,10 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             else if (e.PropertyName == nameof(SerialConnectionService.HandshakeStatus))
             {
                 UpdateConnectionStatus();
+            }
+            else if (e.PropertyName == nameof(SerialConnectionService.FirmwareVersion))
+            {
+                FirmwareVersion = _serialService.FirmwareVersion;
             }
         }
 
@@ -809,11 +841,16 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
 
         public void StopAllMovement()
         {
+            StopJogMovement();
+            SendCommand("STOP:1\n");
+        }
+
+        public void StopJogMovement()
+        {
             if (!IsRelativeMode)
             {
                 StopJogWatchdog();
             }
-            SendCommand("STOP:1\n");
         }
 
         private void StartJogWatchdog(string command)
@@ -881,6 +918,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
 
         private void OnAlignAz()
         {
+            EndEditingAlignment();
+
             var direction = AzErrorRight ? 1 : 0;
             var command = $"AzED:{AzErrorDeg},AzEM:{AzErrorMin},AzES:{AzErrorSec},AzAN:1\n";
             SendCommand(command);
@@ -888,6 +927,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
 
         private void OnAlignAlt()
         {
+            EndEditingAlignment();
+
             var direction = AltErrorUp ? 1 : 0;
             var command = $"AlED:{AltErrorDeg},AlEM:{AltErrorMin},AlES:{AltErrorSec},AlAN:1\n";
             SendCommand(command);
@@ -895,6 +936,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
 
         private void OnAlignAll()
         {
+            EndEditingAlignment();
+
             var command = $"AzED:{AzErrorDeg},AzEM:{AzErrorMin},AzES:{AzErrorSec}," +
                          $"AlED:{AltErrorDeg},AlEM:{AltErrorMin},AlES:{AltErrorSec},AAll:1\n";
             SendCommand(command);

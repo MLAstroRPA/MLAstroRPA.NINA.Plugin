@@ -14,25 +14,29 @@
         <h1 class="brand-title">MLAstro RPA</h1>
         <p class="brand-subtitle">Robotic Polar Alignment</p>
         <div class="version-info">
-          <span class="v-label">Version:</span> <span id="display-fw-ver">firmware ...</span>
-          <span class="v-sep">|</span>
-          <span id="display-spiffs-ver">spiffs 1.0.125</span>
+          <span id="display-fw-ver">Firmware 1.2.59</span>
+          <span id="display-spiffs-ver" style="display:none;">spiffs 1.2.59</span>
         </div>
       </div>
-      <div class="header-status">
-        <div class="status-item cursor-pointer" id="status-link" title="Click to view System Log">
-          <span class="label">Status:</span>
-          <span id="system-status" class="status-value">Idle</span>
+      <div class="header-tools">
+        <div class="header-status">
+          <div class="status-item cursor-pointer" id="status-link" title="Click to view System Log">
+            <span class="label">Status:</span>
+            <span id="system-status" class="status-value">Idle</span>
+          </div>
+          <div class="status-item connection-row">
+            <span class="label">Network:</span>
+            <span id="connection-status" class="wifi-status" title="Connecting...">⚪</span>
+          </div>
+          <select id="theme-select" title="Theme Mode">
+            <option value="auto">🌗 Auto</option>
+            <option value="dark">🌑 Dark</option>
+            <option value="light">☀️ Light</option>
+          </select>
         </div>
-        <div class="status-item">
-          <span class="label">Connection:</span>
-          <span id="connection-status" class="wifi-status" title="Connecting...">⚪</span>
+        <div class="force-stop-card">
+          <button id="btn-force-stop" class="btn-force-stop">FORCE<br>STOP</button>
         </div>
-        <select id="theme-select" title="Theme Mode">
-          <option value="auto">🌗 Auto</option>
-          <option value="dark">🌑 Dark</option>
-          <option value="light">☀️ Light</option>
-        </select>
       </div>
     </div>
   </header>
@@ -120,7 +124,6 @@
               </div>
               <button class="arrow-btn down" id="btn-down">▼<span class="arrow-label">Alt</span></button>
             </div>
-            <button id="btn-force-stop" class="btn-force-stop">FORCE<br>STOP</button>
           </div>
         </div>
       </section>
@@ -205,41 +208,33 @@
           </div>
           
           <div class="alignment-inputs">
-            <div class="input-group">
-              <label>Az Error:</label>
-              <div class="dms-row">
-              <input type="number" id="az-deg" class="input-field dms-field" placeholder="Deg" min="0" max="360" step="1">°
-              <input type="number" id="az-min" class="input-field dms-field" placeholder="Min" min="0" max="59" step="1">'
-              <input type="number" id="az-sec" class="input-field dms-field" placeholder="Sec" min="0" max="59" step="1">"
-            </div>
-            <div class="control-row">
-              <div class="toggle-wrapper">
-                <span>Left</span>
-                <label class="switch"><input type="checkbox" id="az-dir"><span class="slider"></span></label>
-                <span>Right</span>
-              </div>
-              <div>
-                <button class="btn btn-primary btn-sm" id="align-az-btn">Align Az</button>
-              </div>
-            </div>
-          </div>
           <div class="input-group">
-            <label>Alt Error:</label> <!-- Sửa Dec thành Alt (Ath) -->
+            <label>Alt Error:</label>
             <div class="dms-row">
               <input type="number" id="alt-deg" class="input-field dms-field" placeholder="Deg" min="0" max="360" step="1">°
               <input type="number" id="alt-min" class="input-field dms-field" placeholder="Min" min="0" max="59" step="1">'
               <input type="number" id="alt-sec" class="input-field dms-field" placeholder="Sec" min="0" max="59" step="1">"
             </div>
-            <div class="control-row">
-              <div class="toggle-wrapper">
-                <span>Down</span>
-                <label class="switch"><input type="checkbox" id="alt-dir"><span class="slider"></span></label>
-                <span>Up</span>
-              </div>
-              <div>
-                <button class="btn btn-primary btn-sm" id="align-alt-btn">Align Alt</button>
-              </div>
+            <div class="toggle-wrapper toggle-wrapper-vertical" aria-label="Alt direction selector">
+              <span>Up</span>
+              <label class="switch switch-vertical"><input type="checkbox" id="alt-dir"><span class="slider"></span></label>
+              <span>Down</span>
             </div>
+            <button class="btn btn-primary btn-sm" id="align-alt-btn">Align Alt</button>
+          </div>
+          <div class="input-group">
+            <label>Az Error:</label>
+            <div class="dms-row">
+              <input type="number" id="az-deg" class="input-field dms-field" placeholder="Deg" min="0" max="360" step="1">°
+              <input type="number" id="az-min" class="input-field dms-field" placeholder="Min" min="0" max="59" step="1">'
+              <input type="number" id="az-sec" class="input-field dms-field" placeholder="Sec" min="0" max="59" step="1">"
+            </div>
+            <div class="toggle-wrapper">
+              <span>Left</span>
+              <label class="switch"><input type="checkbox" id="az-dir"><span class="slider"></span></label>
+              <span>Right</span>
+            </div>
+            <button class="btn btn-primary btn-sm" id="align-az-btn">Align Az</button>
           </div>
           <button class="btn btn-success btn-large" id="align-btn">✓ ALIGN ALL</button>
         </div>
@@ -260,6 +255,29 @@
         <div class="panel-content">
           <div class="history-list" id="system-log">
             <div class="history-empty">Waiting for logs...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Serial Log -->
+      <section class="panel log-panel" id="serial-log-panel" style="display:none;">
+        <div class="panel-header log-header">
+          <div class="log-header-title">
+            <h2>🔀 Serial Log (TX/RX)</h2><span class="toggle-icon">▼</span>
+          </div>
+          <div class="log-actions">
+            <label class="checkbox-label" style="display:inline-flex; align-items:center; gap:4px; margin-right:6px;">
+              <input type="checkbox" id="show-serial-rx" class="checkbox-input" checked> Show RX
+            </label>
+            <label class="checkbox-label" style="display:inline-flex; align-items:center; gap:4px; margin-right:6px;">
+              <input type="checkbox" id="show-serial-tx" class="checkbox-input" checked> Show TX
+            </label>
+            <button id="clear-serial-log-btn" class="btn btn-danger log-btn">🗑️ Clear</button>
+          </div>
+        </div>
+        <div class="panel-content">
+          <div class="history-list" id="serial-log">
+            <div class="history-empty">Waiting for serial data...</div>
           </div>
         </div>
       </section>
@@ -344,17 +362,23 @@
           <h2>📏 Soft Limits (Degrees)</h2><span class="toggle-icon">▼</span>
         </div>
         <div class="panel-content">
+          <div class="config-item" style="margin-bottom: 12px;">
+            <label for="enable-softlimit" class="checkbox-label">
+              <input type="checkbox" id="enable-softlimit" class="checkbox-input" checked>
+              Enable Soft Limit
+            </label>
+          </div>
           <div class="subsection">
             <h3>AZ Limits</h3>
             <div class="config-grid motor-grid">
               <div class="config-item">
                 <label>Min:</label>
-                <div class="input-wrapper"><input type="number" id="limit-az-min" value="-9" step="0.1">
+                <div class="input-wrapper"><input type="number" id="limit-az-min" value="-9" min="-9" max="9" step="1">
                 <span class="unit">°</span></div>
               </div>
               <div class="config-item">
                 <label>Max:</label>
-                <div class="input-wrapper"><input type="number" id="limit-az-max" value="9" step="0.1">
+                <div class="input-wrapper"><input type="number" id="limit-az-max" value="9" min="-9" max="9" step="1">
                 <span class="unit">°</span></div>
               </div>
             </div>
@@ -364,12 +388,12 @@
             <div class="config-grid motor-grid">
               <div class="config-item">
                 <label>Min:</label>
-                <div class="input-wrapper"><input type="number" id="limit-alt-min" value="-14" step="0.1">
+                <div class="input-wrapper"><input type="number" id="limit-alt-min" value="-14" min="-14" max="14" step="1">
                 <span class="unit">°</span></div>
               </div>
               <div class="config-item">
                 <label>Max:</label>
-                <div class="input-wrapper"><input type="number" id="limit-alt-max" value="14" step="0.1">
+                <div class="input-wrapper"><input type="number" id="limit-alt-max" value="14" min="-14" max="14" step="1">
                 <span class="unit">°</span></div>
               </div>
             </div>
@@ -521,25 +545,55 @@
       <!-- Backlash Configuration -->
       <section class="panel backlash-panel" id="panel-backlash">
         <div class="panel-header">
-          <h2>↔️ Lead Screw Backlash</h2><span class="toggle-icon">▼</span>
+          <h2>↔️ Backlash & P.A Overshoot</h2><span class="toggle-icon">▼</span>
         </div>
         <div class="panel-content">
           <div class="config-item" style="margin-bottom: 15px;">
             <label for="enable-backlash" class="checkbox-label">
               <input type="checkbox" id="enable-backlash" class="checkbox-input">
-              Enable Anti Backlash
+              Enable Anti Backlash on firmware
             </label>
           </div>
-          <div class="config-grid">
-            <div class="config-item">
-              <label>AZ Backlash:</label>
-              <div class="input-wrapper"><input type="number" id="backlash-az" value="100">
-              <span class="unit">steps</span></div>
+          <div style="margin-left: 24px;">
+            <div class="config-grid">
+              <div class="config-item">
+                <label>AZ Backlash:</label>
+                <div class="input-wrapper"><input type="number" id="backlash-az" value="100">
+                <span class="unit">steps</span></div>
+              </div>
+              <div class="config-item">
+                <label>ALT Backlash:</label>
+                <div class="input-wrapper"><input type="number" id="backlash-alt" value="80">
+                <span class="unit">steps</span></div>
+              </div>
             </div>
-            <div class="config-item">
-              <label>ALT Backlash:</label>
-              <div class="input-wrapper"><input type="number" id="backlash-alt" value="80">
-              <span class="unit">steps</span></div>
+          </div>
+          <div class="config-item" style="margin-bottom: 15px;">
+            <label for="enable-overshoot" class="checkbox-label">
+              <input type="checkbox" id="enable-overshoot" class="checkbox-input">
+              Enable Alt P.A Overshoot on firmware
+            </label>
+          </div>
+          <div style="margin-left: 24px;">
+            <div class="config-item" style="margin-bottom: 15px;">
+              <label for="overshoot-up" class="checkbox-label">
+                <input type="checkbox" id="overshoot-up" class="checkbox-input">
+                Move up overshoot
+              </label>
+            </div>
+            <div class="config-item" style="margin-bottom: 15px;">
+              <label for="overshoot-down" class="checkbox-label">
+                <input type="checkbox" id="overshoot-down" class="checkbox-input">
+                Move down overshoot
+              </label>
+            </div>
+            <div class="config-item" style="margin-bottom: 15px;">
+              <label>Overshoot Amount:</label>
+              <div class="dms-row">
+                <input type="number" id="overshoot-deg" class="input-field dms-field" placeholder="Deg" min="0" max="10" step="1" value="0">°
+                <input type="number" id="overshoot-min" class="input-field dms-field" placeholder="Min" min="0" max="59" step="1" value="0">'
+                <input type="number" id="overshoot-sec" class="input-field dms-field" placeholder="Sec" min="0" max="59" step="1" value="0">"
+              </div>
             </div>
           </div>
         </div>
@@ -567,11 +621,11 @@
               </div>
               <div class="config-item">
                 <label>AP IP Address:</label>
-                <input type="text" id="ap-ip" placeholder="1.0.124.1">
+                <input type="text" id="ap-ip" placeholder="1.2.59.1">
               </div>
               <div class="config-item">
                 <label>Subnet Mask:</label>
-                <input type="text" id="ap-subnet" placeholder="1.0.124.0">
+                <input type="text" id="ap-subnet" placeholder="1.2.59.0">
               </div>
             </div>
             
@@ -613,6 +667,68 @@
           <h2>🔑 Admin Config</h2><span class="toggle-icon">▼</span>
         </div> 
         <div class="panel-content">
+          <!-- Serial Setting (moved into Admin Config) -->
+          <div class="subsection" style="margin-bottom: 15px;">
+            <h3>🔌 Serial Setting</h3>
+            <div class="config-grid" style="grid-template-columns: repeat(2, 1fr);">
+              <div class="config-item">
+                <label>Baud Rate:</label>
+                <select id="serial-baud" class="input-field">
+                  <option value="9600">9600</option>
+                  <option value="19200">19200</option>
+                  <option value="38400">38400</option>
+                  <option value="57600">57600</option>
+                  <option value="115200" selected>115200</option>
+                  <option value="230400">230400</option>
+                  <option value="460800">460800</option>
+                  <option value="921600">921600</option>
+                </select>
+              </div>
+              <div class="config-item">
+                <label>Data Bits:</label>
+                <select id="serial-databits" class="input-field">
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8" selected>8</option>
+                </select>
+              </div>
+              <div class="config-item">
+                <label>Stop Bits:</label>
+                <select id="serial-stopbits" class="input-field">
+                  <option value="1" selected>1</option>
+                  <option value="1.5">1.5</option>
+                  <option value="2">2</option>
+                </select>
+              </div>
+              <div class="config-item">
+                <label>Parity:</label>
+                <select id="serial-parity" class="input-field">
+                  <option value="0" selected>None</option>
+                  <option value="1">Even</option>
+                  <option value="2">Odd</option>
+                </select>
+              </div>
+            </div>
+            <div class="config-item" style="margin-top: 15px;">
+              <label for="enable-comm-watchdog" class="checkbox-label">
+                <input type="checkbox" id="enable-comm-watchdog" class="checkbox-input" checked>
+                Enable Communication Watchdog (ESTOP on lost heartbeat)
+              </label>
+            </div>
+            <div class="config-item" style="margin-top: 10px;">
+              <label for="toggle-serial-log-btn" class="checkbox-label">
+                <input type="checkbox" id="toggle-serial-log-btn" class="checkbox-input">
+                Show Serial logs
+              </label>
+            </div>
+          </div>
+          <div class="config-item" style="margin-top: 15px;">
+            <label for="swap-az-alt" class="checkbox-label">
+              <input type="checkbox" id="swap-az-alt" class="checkbox-input">
+              Swap Az-Alt motor ports (requires reboot)
+            </label>
+          </div>
           <div class="config-item" style="margin-top: 15px;">
             <label for="show-hardlimit-monitor" class="checkbox-label">
               <input type="checkbox" id="show-hardlimit-monitor" class="checkbox-input">
@@ -625,6 +741,13 @@
             Show current step in Control tab
           </label>
         </div>
+          <div class="config-item" style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 15px;">
+            <label>Factory Zero:</label>
+            <p style="font-size: 11px; color: var(--text-muted); margin: 6px 0 10px 0;">
+              Set soft-limit reference at current physical position, and apply Set Home at the same time.
+            </p>
+            <button id="factory-zero-btn" class="btn btn-danger">📍 SET FACTORY ZERO</button>
+          </div>
         <div class="config-item" style="margin-top: 15px;">
           <label>Max Motor RPM (Speed Level 5):</label>
           <div class="input-wrapper">
@@ -694,6 +817,22 @@
             <button id="calib-all-btn" class="btn btn-primary">Calib All</button>
           </div>
         </div>
+        <!-- Change Admin Password -->
+        <div class="config-item" style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 15px;">
+          <label>🔒 Change Admin Password:</label>
+          <div class="config-grid" style="grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+            <div class="config-item">
+              <label>Current Password:</label>
+              <input type="password" id="admin-old-pass" placeholder="Current password" class="input-field">
+            </div>
+            <div class="config-item">
+              <label>New Password:</label>
+              <input type="password" id="admin-new-pass" placeholder="New password (max 63 chars)" class="input-field">
+            </div>
+          </div>
+          <div id="change-pass-msg" class="inline-message" style="margin-top: 6px;"></div>
+          <button id="change-pass-btn" class="btn btn-warning" style="margin-top: 8px;">Change Password</button>
+        </div>
         </div>
       </section>
 
@@ -703,9 +842,11 @@
           <h2>🚀 System Update</h2><span class="toggle-icon">▼</span>
         </div>
         <div class="panel-content">
-          <p style="margin-bottom: 20px; font-size: 14px; color: var(--text-muted);">
-            Check the GitHub repository for the latest firmware and system data updates.
-          </p>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; font-size: 14px; color: var(--text-muted);">
+            <span>Check for update from release <a href="https://github.com/MLAstroRPA/Update/tree/main" target="_blank">repository</a></span>
+            <a href="https://github.com/MLAstroRPA/Update/issues" target="_blank" style="color: var(--danger); white-space: nowrap;">🐛 Report issue</a>
+          </div>
+
           
           <div class="button-group" style="margin-bottom: 25px; justify-content: center;">
             <button class="btn btn-primary" onclick="checkAllUpdates()" style="padding: 10px 25px;">
@@ -725,8 +866,30 @@
               ⚠️ DO NOT POWER OFF OR REFRESH during the update!
             </p>
           </div>
+
+          <div id="usb-flash-host" class="hidden"></div>
         </div>
       </section>
+
+      <div id="ota-install-overlay" class="ota-install-overlay hidden">
+        <div class="ota-install-card">
+          <div id="ota-install-view-installing">
+            <div class="ota-install-title">Installing</div>
+            <div class="ota-install-graphic">
+              <div id="ota-install-ring" class="ota-install-ring"></div>
+            </div>
+            <div id="ota-install-percent" class="ota-install-percent">0%</div>
+            <div id="ota-install-phase" class="ota-install-phase">Preparing update...</div>
+            <div class="ota-install-note">This will take 2 minutes.</div>
+            <div class="ota-install-help">Keep this page visible to prevent slow down</div>
+          </div>
+          <div id="ota-install-view-success" class="hidden">
+            <div class="ota-install-success-icon">🎉</div>
+            <div class="ota-install-success-title">Installation complete!</div>
+            <div id="ota-install-success-countdown" class="ota-install-success-countdown">REBOOTING IN 3s</div>
+          </div>
+        </div>
+      </div>
 
       <!-- Save Settings -->
       <section class="panel save-panel" id="panel-save">
@@ -734,8 +897,11 @@
           <h2>💾 Configuration Management</h2><span class="toggle-icon">▼</span>
         </div>
         <div class="panel-content">
-          <button class="btn btn-success btn-large" id="save-all-btn">✓ SAVE ALL SETTINGS & REBOOT</button>
+          <button class="btn btn-primary btn-large" id="apply-btn">⚡ APPLY SETTINGS</button>
+          <button class="btn btn-success btn-large" id="save-all-btn">✓ SAVE ALL & REBOOT</button>
+          <button class="btn btn-warning btn-large" id="reboot-btn">⏻ REBOOT</button>
           <button class="btn btn-secondary btn-large admin-btn" id="admin-config-btn">🔑 Admin Config</button>
+          <button class="btn btn-danger btn-large" id="factory-reset-btn">⚠️ FACTORY RESET</button>
           <div id="save-message" class="inline-message save-msg"></div>
         </div>
       </section>
@@ -758,6 +924,20 @@
       </div>
     </div>
   </div>
+
+  <!-- CONNECTION LOCKED OVERLAY (không thể đóng, chỉ có nút Close Page) -->
+  <div id="connection-locked-overlay" class="connection-locked-overlay hidden">
+    <div class="connection-locked-card">
+      <div class="connection-locked-icon">🔒</div>
+      <h2 class="connection-locked-title">Connection Rejected</h2>
+      <p id="connection-locked-reason" class="connection-locked-reason"></p>
+      <p class="connection-locked-hint">The system is currently busy. Only one control session is allowed at a time.</p>
+      <button id="connection-locked-close-btn" class="btn btn-danger btn-large">✕ Close This Page</button>
+    </div>
+  </div>
+
+  <!-- SCROLL TO BOTTOM BUTTON -->
+  <button id="scroll-bottom-btn" class="scroll-bottom-btn" title="Scroll to bottom"></button>
 
   <!-- FOOTER -->
   <footer class="footer">

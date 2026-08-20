@@ -12,8 +12,8 @@
 
 	<!-- Assembly Info for PluginBase -->
 	<AssemblyTitle>MLAstro Robotic Polar Alignment</AssemblyTitle>
-	<AssemblyVersion>1.0.0.1</AssemblyVersion>
-	<FileVersion>1.0.0.1</FileVersion>
+  <AssemblyVersion>2.0.0.1</AssemblyVersion>
+  <FileVersion>2.0.0.1</FileVersion>
 	<Company>MLAstro</Company>
 
 	<!-- Generate COM GUID for assembly - required by PluginBase for Identifier -->
@@ -52,22 +52,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove=".github\**" />
-    <Compile Remove="Installer\**" />
     <Compile Remove="NewFolder\**" />
     <Compile Remove="Tools\**" />
-    <EmbeddedResource Remove=".github\**" />
-    <EmbeddedResource Remove="Installer\**" />
     <EmbeddedResource Remove="NewFolder\**" />
     <EmbeddedResource Remove="Tools\**" />
-    <None Remove=".github\**" />
-    <None Remove="Installer\**" />
     <None Remove="NewFolder\**" />
     <None Remove="Tools\**" />
-    <Page Remove=".github\**" />
-    <Page Remove="Installer\**" />
     <Page Remove="NewFolder\**" />
     <Page Remove="Tools\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include=".github\copilot-instructions.md" />
+    <None Include="Installer\MSI\MLAstro.RPA.Installer.wixproj" />
   </ItemGroup>
 	 
 	
@@ -82,78 +79,6 @@
     <PackageReference Include="System.IO.Ports" Version="8.0.0" GeneratePathProperty="False" />
   </ItemGroup>
 
-
-  <ItemGroup>
-    <Reference Include="CommunityToolkit.Mvvm">
-      <HintPath>Reference\CommunityToolkit.Mvvm.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA">
-      <HintPath>Reference\NINA.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Astrometry">
-      <HintPath>Reference\NINA.Astrometry.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Core">
-      <HintPath>Reference\NINA.Core.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.CustomControlLibrary">
-      <HintPath>Reference\NINA.CustomControlLibrary.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Equipment">
-      <HintPath>Reference\NINA.Equipment.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Image">
-      <HintPath>Reference\NINA.Image.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.MGEN">
-      <HintPath>Reference\NINA.MGEN.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.PlateSolving">
-      <HintPath>Reference\NINA.PlateSolving.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Plugin">
-      <HintPath>Reference\NINA.Plugin.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Plugins.PolarAlignment">
-      <HintPath>Reference\NINA.Plugins.PolarAlignment.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Profile">
-      <HintPath>Reference\NINA.Profile.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Sequencer">
-      <HintPath>Reference\NINA.Sequencer.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.WPF.Base">
-      <HintPath>Reference\NINA.WPF.Base.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Nito.Mvvm.Async">
-      <HintPath>Reference\Nito.Mvvm.Async.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Nito.Mvvm.Core">
-      <HintPath>Reference\Nito.Mvvm.Core.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="System.ComponentModel.Composition">
-      <HintPath>Reference\System.ComponentModel.Composition.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-  </ItemGroup>
-
   <!-- Exclude runtimes folder from ALL output directories after every build step -->
   <Target Name="ExcludeRuntimesFolder" AfterTargets="Build;Publish;CopyFilesToOutputDirectory" BeforeTargets="PostBuildEvent">
     <RemoveDir Directories="$(OutputPath)runtimes" Condition="Exists('$(OutputPath)runtimes')" />
@@ -161,6 +86,77 @@
     <RemoveDir Directories="$(TargetDir)runtimes" Condition="Exists('$(TargetDir)runtimes')" />
     <Message Importance="High" Text="[MLAstro] Removed runtimes folder from output" />
   </Target>
+
+  <ItemGroup>
+    <Reference Include="CommunityToolkit.Mvvm">
+      <HintPath>Preference\CommunityToolkit.Mvvm.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA">
+      <HintPath>Preference\NINA.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Astrometry">
+      <HintPath>Preference\NINA.Astrometry.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Core">
+      <HintPath>Preference\NINA.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.CustomControlLibrary">
+      <HintPath>Preference\NINA.CustomControlLibrary.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Equipment">
+      <HintPath>Preference\NINA.Equipment.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Image">
+      <HintPath>Preference\NINA.Image.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.MGEN">
+      <HintPath>Preference\NINA.MGEN.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.PlateSolving">
+      <HintPath>Preference\NINA.PlateSolving.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Plugin">
+      <HintPath>Preference\NINA.Plugin.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Plugins.PolarAlignment">
+      <HintPath>Preference\NINA.Plugins.PolarAlignment.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Profile">
+      <HintPath>Preference\NINA.Profile.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.Sequencer">
+      <HintPath>Preference\NINA.Sequencer.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="NINA.WPF.Base">
+      <HintPath>Preference\NINA.WPF.Base.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Nito.Mvvm.Async">
+      <HintPath>Preference\Nito.Mvvm.Async.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Nito.Mvvm.Core">
+      <HintPath>Preference\Nito.Mvvm.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.ComponentModel.Composition">
+      <HintPath>Preference\System.ComponentModel.Composition.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
 	
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent" DependsOnTargets="ExcludeRuntimesFolder">
 		<PropertyGroup>

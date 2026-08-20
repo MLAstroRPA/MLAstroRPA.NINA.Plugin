@@ -16,7 +16,8 @@ To communicate with the ESP32 via USB Serial, use the following port settings:
 By default, the Web UI has full control of the mount. Before sending any movement or configuration commands via Serial, the PC software must initiate a handshake.
 
 *   **Send:** `[MLAstroRPA-TC]\n`
-*   **System Reply:** `ok\n`
+*   **System Reply:** `ok,<firmware_version>,SN:<base_mac>\n`
+    *   Example: `ok,firmware 1.2.43,SN:AA:BB:CC:DD:EE:F0\n`
 
 **Behavior:** 
 Once the handshake is accepted, the ESP32 will lock out all Web UI control to prevent conflicts. If a user manually reloads the web page, the ESP32 will drop the PC control, print `DISCONNECTED\n` to the Serial port, and wait for a new handshake.
@@ -50,7 +51,7 @@ To prevent equipment damage in case of software crashes or disconnected cables d
 | `ESTOP:0\n` / `STOP:0\n` | Ignored (Button release event). |
 
 ### Movement Commands
-*Use `:1` to start moving (PC APP has to sent this once 300ms to remind hardware that the button is still pressing) and `:0` to stop. Applies to both Jog and Relative modes.*
+*Use `:1` to start moving (the PC app should resend this every 300ms to indicate the button is still held) and `:0` to stop. Applies to both Jog and Relative modes.*
 | Command | Action / Description |
 | :--- | :--- |
 | `MAzL:1\n` | Move Azimuth Left (Negative direction). |
@@ -125,16 +126,26 @@ To prevent equipment damage in case of software crashes or disconnected cables d
 
 **Backlash Settings**
 *   `Back:X\n` : Enable/Disable Backlash Compensation (`0` = Disable, `1` = Enable).
+*   `Over:X\n` : Enable/Disable the Alt-axis 2-leg P.A Overshoot Routine (`0` = Disable, `1` = Enable). Master switch cho cả 2 chiều.
+*   `OvUp:X\n` : Enable/Disable Move up overshoot (`0` = Disable, `1` = Enable). Áp dụng khi trục Alt chạy LÊN.
+*   `OvDn:X\n` : Enable/Disable Move down overshoot (`0` = Disable, `1` = Enable). Áp dụng khi trục Alt chạy XUỐNG.
+*   `OvD:X\n` : Set Overshoot Amount Degrees (`0` to `10`). Độ vượt đích của trục Alt.
+*   `OvM:X\n` : Set Overshoot Amount Arc Minutes (`0` to `59`).
+*   `OvS:X\n` : Set Overshoot Amount Arc Seconds (`0` to `59`).
 *   `AzBl:X\n` / `AlBl:X\n` : Set Azimuth/Altitude Backlash Steps.
 
 **Network Settings (WiFi & Access Point)**
-*   `STAs:X\n` : Set Station (WiFi) SSID (Mạng local để ESP32 kết nối vào).
+*   `STAs:X\n` : Set Station (WiFi) SSID (local WiFi network that ESP32 connects to).
 *   `STAp:X\n` : Set Station (WiFi) Password.
-*   `STAi:X\n` : *(Read-Only)* Trả về `ok` nhưng bỏ qua lệnh set (IP Station do Router cấp DHCP).
-*   `APss:X\n` : Set Access Point (Hotspot) SSID (Tên mạng WiFi do ESP32 phát ra).
+*   `STAi:X\n` : *(Read-Only)* Returns `ok` but ignores set requests (Station IP is assigned by router DHCP).
+*   `STAp:?\n` : **Query WiFi Password Only**. Returns `STAp:X\n` (Station WiFi password).
+*   `STAm` : *(Read-Only)* Station MAC address (available in Telemetry).
+*   `APss:X\n` : Set Access Point (Hotspot) SSID (WiFi name broadcast by ESP32).
 *   `APpa:X\n` : Set Access Point Password.
-*   `APip:X\n` : Set Access Point IP Address (VD: `192.168.4.1`).
-*   *(Ghi chú: Access Point Subnet `APsu` luôn mặc định `255.255.255.0` và Station IP `STAi` có thể đọc thông qua Telemetry).*
+*   `APpa:?\n` : **Query AP Password Only**. Returns `APpa:X\n` (Access Point password).
+*   `APip:X\n` : Set Access Point IP Address (e.g., `192.168.4.1`).
+*   `APma` : *(Read-Only)* Access Point MAC address (available in Telemetry).
+*   *(Note: Access Point subnet `APsu` is always `255.255.255.0` by default, and Station IP `STAi` can be read via Telemetry).*
 
 **Save & Reboot**
 *   `Save&Reboot:1\n` : Saves all current memory parameters to FRAM and triggers a system reboot. ESP will respond with `ok` followed by `REBOOTING...`.
@@ -159,18 +170,18 @@ The ESP32 will reply immediately with a data string formatted as follows:
 *   `DATA_SETTING`: A comma-separated list of all current system configuration variables.
 
 **Full List of Telemetry Data Keys (DATA_SETTING):**
-*   **System:** `Scal` (Scale cố định=1), `WSta` (WiFi Status: 1=Connected, 0=Disconnected), `SLvl` (Current Speed Level 1-5), `Home` (Homed status: 1/0).
+*   **System:** `Scal` (Fixed scale = 1), `WSta` (WiFi Status: 1=Connected, 0=Disconnected), `SLvl` (Current Speed Level 1-5), `Home` (Homed status: 1/0).
 *   **Relative Move:** `JoRe` (Mode: 0=Jog, 1=Relative), `ReDe` (Deg), `ReAM` (Min), `ReAS` (Sec).
 *   **Alignment Settings:** `AzED`, `AzEM`, `AzES`, `AzDi` (Direction: 1/0), `AlED`, `AlEM`, `AlES`, `AlDi` (Direction: 1/0).
 *   **Azimuth Settings:** `AzPH` (Current Position in Deg), `AzL1`/`AzL2` (Soft Limits Min/Max), `AzRD` (Reverse Dir: 1/0), `AzIR`/`AzIH` (Run/Hold Current mA), `AzSB`/`AzSC` (Startup Boost/Soft CoolStep %), `AzMS` (Microsteps), `AzAc`/`AzDec` (Accel/Decel), `AzSD` (Steps/Degree), `AzRM` (Run Mode: 1=SpreadCycle, 0=StealthChop).
 *   **Altitude Settings:** `AlPH` (Current Position in Deg), `AlL1`/`AlL2` (Soft Limits Min/Max), `AlRD` (Reverse Dir: 1/0), `AlIR`/`AlIH` (Run/Hold Current mA), `AlSB`/`AlSC` (Startup Boost/Soft CoolStep %), `AlMS` (Microsteps), `AlAc`/`AlDe` (Accel/Decel), `AlSD` (Steps/Degree), `AlRM` (Run Mode: 1=SpreadCycle, 0=StealthChop).
-*   **Backlash:** `Back` (Enabled: 1/0), `AzBl`/`AlBl` (Backlash Steps).
-*   **Access Point:** `APss` (SSID), `APpa` (Pass), `APip` (IP), `APsu` (Subnet).
-*   **Station (WiFi):** `STAs` (SSID), `STAp` (Pass), `STAi` (Current assigned IP từ Router).
+*   **Backlash:** `Back` (Enabled: 1/0), `Over` (Overshoot Routine Enabled: 1/0), `OvD`/`OvM`/`OvS` (Overshoot Amount: Degrees/Minutes/Seconds), `OvUp`/`OvDn` (Move Up/Down Overshoot Enabled: 1/0), `AzBl`/`AlBl` (Backlash Steps).
+*   **Access Point:** `APss` (SSID), `APma` (MAC), `APip` (IP), `APsu` (Subnet).
+*   **Station (WiFi):** `STAs` (SSID), `STAm` (MAC), `STAi` (Current IP assigned by router).
 
 ---
 
-## 5. System Responses
+## 6. System Responses
 Upon receiving a command, the ESP32 will immediately process it and return a string response.
 
 *   `ok\n` : Command was successfully received and executed.

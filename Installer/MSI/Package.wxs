@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  MLAstro Robotic Polar Alignment - N.I.N.A Plugin
+  WiX v6 Installer Package
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <!-- Define variables -->
+  <?define ProductName = "MLAstro Robotic Polar Alignment" ?>
+  <?define ProductVersion = "2.0.0.1" ?>
+  <?define Manufacturer = "MLAstro" ?>
+  <?define UpgradeCode = "8F3D9A2B-1C4E-4D5F-A6B7-8C9D0E1F2A3B" ?>
+  <?define PluginFolderName = "MLAstro_Robotic_Polar_Alignment" ?>
+  <?define NINAVersion = "3.0.0" ?>
+
+  <!-- Package definition -->
+  <Package Name="$(var.ProductName)"
+           Manufacturer="$(var.Manufacturer)"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="$(var.UpgradeCode)"
+           Scope="perUser"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <SummaryInformation Description="$(var.ProductName) plugin for N.I.N.A. astrophotography software" />
+
+    <!-- Upgrade handling - remove older versions -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  AllowSameVersionUpgrades="yes" />
+
+    <!-- Embed CAB for single MSI file -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- ========== CHECK IF NINA IS INSTALLED ========== -->
+
+    <!-- Check if NINA Plugins folder exists -->
+    <Property Id="NINAPLUGINSFOLDER">
+      <DirectorySearch Id="NINAPluginsDirSearch" Path="[LocalAppDataFolder]NINA\Plugins" />
+    </Property>
+
+    <!-- Check for NINA.exe in Program Files -->
+    <Property Id="NINAEXE_PROGRAMFILES">
+      <DirectorySearch Id="NINAProgramFilesSearch" Path="[ProgramFiles64Folder]N.I.N.A">
+        <FileSearch Name="NINA.exe" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Check for NINA.exe in LocalAppData -->
+    <Property Id="NINAEXE_LOCALAPPDATA">
+      <DirectorySearch Id="NINALocalAppDataSearch" Path="[LocalAppDataFolder]NINA">
+        <FileSearch Name="NINA.exe" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Launch condition: NINA must be installed -->
+    <Launch Condition="NINAPLUGINSFOLDER OR NINAEXE_PROGRAMFILES OR NINAEXE_LOCALAPPDATA OR Installed"
+            Message="N.I.N.A. (Nighttime Imaging 'N' Astronomy) version 3.0 or later must be installed before installing this plugin.&#13;&#10;&#13;&#10;Please download and install N.I.N.A. from:&#13;&#10;https://nighttime-imaging.eu/&#13;&#10;&#13;&#10;After installing N.I.N.A., run this installer again." />
+
+    <!-- ========== CHECK IF NINA IS RUNNING ========== -->
+
+    <!-- Warn and prompt user to close NINA before installation -->
+    <!-- CloseApplication will detect if NINA is running and prompt user -->
+    <util:CloseApplication Id="CloseNINAPrompt"
+                           Target="NINA.exe"
+                           RebootPrompt="no"
+                           CloseMessage="no"
+                           PromptToContinue="yes"
+                           Description="N.I.N.A. is currently running and must be closed before installation can continue.&#13;&#10;&#13;&#10;Please save your work and close N.I.N.A., then click 'Retry' to continue installation.&#13;&#10;&#13;&#10;Click 'Ignore' to attempt to close N.I.N.A. automatically (not recommended if imaging session is active)." />
+
+    <!-- Main installation feature -->
+    <Feature Id="ProductFeature" Title="$(var.ProductName)" Level="1">
+      <ComponentGroupRef Id="PluginFiles" />
+      <ComponentRef Id="CreatePluginFolder" />
+    </Feature>
+
+    <!-- Use standard WiX UI -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+    <!-- Custom completion message -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" 
+              Value="Installation complete!&#13;&#10;&#13;&#10;Start N.I.N.A. to use the MLAstro Robotic Polar Alignment plugin.&#13;&#10;The plugin control panel will appear in the 'Docking' menu." />
+
+  </Package>
+
+  <!-- Directory structure: LocalAppData\NINA\Plugins\3.0.0\PluginName -->
+  <Fragment>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="NINADir" Name="NINA">
+        <Directory Id="PluginsDir" Name="Plugins">
+          <Directory Id="VersionDir" Name="$(var.NINAVersion)">
+            <Directory Id="INSTALLFOLDER" Name="$(var.PluginFolderName)" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- Component to create and remove the plugin folder -->
+  <Fragment>
+    <Component Id="CreatePluginFolder" Directory="INSTALLFOLDER" Guid="F6A7B8C9-D0E1-2345-F012-456789ABCDEF">
+      <CreateFolder />
+      <RemoveFolder Id="RemovePluginFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      <RemoveFolder Id="RemoveVersionDir" Directory="VersionDir" On="uninstall" />
+      <RegistryValue Root="HKCU" 
+                     Key="Software\MLAstro\RPA" 
+                     Name="Installed" 
+                     Type="integer" 
+                     Value="1" 
+                     KeyPath="yes" />
+      <RegistryValue Root="HKCU" 
+                     Key="Software\MLAstro\RPA" 
+                     Name="InstallPath" 
+                     Type="string" 
+                     Value="[INSTALLFOLDER]" />
+    </Component>
+  </Fragment>
+
+  <!-- Plugin files component group - only essential files -->
+  <Fragment>
+    <ComponentGroup Id="PluginFiles" Directory="INSTALLFOLDER">
+
+      <!-- Main Plugin DLL -->
+      <Component Id="MainPluginDLL" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <File Id="PluginDLL" 
+              Source="$(var.MLAstro_Robotic_Polar_Alignment.TargetDir)MLAstro_Robotic_Polar_Alignment.dll" />
+        <RegistryValue Root="HKCU" Key="Software\MLAstro\RPA\Components" 
+                       Name="MainDLL" Type="string" Value="[INSTALLFOLDER]MLAstro_Robotic_Polar_Alignment.dll" 
+                       KeyPath="yes" />
+      </Component>
+
+      <!-- Serial ports library -->
+      <Component Id="SerialPortsLib" Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
+        <File Id="SystemIOPorts"
+              Source="$(var.MLAstro_Robotic_Polar_Alignment.TargetDir)System.IO.Ports.dll" />
+        <RegistryValue Root="HKCU" Key="Software\MLAstro\RPA\Components" 
+                       Name="IOPorts" Type="string" Value="[INSTALLFOLDER]System.IO.Ports.dll" 
+                       KeyPath="yes" />
+      </Component>
+
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

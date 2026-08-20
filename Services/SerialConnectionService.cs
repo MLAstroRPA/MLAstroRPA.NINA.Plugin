@@ -8,6 +8,7 @@ using System.IO.Ports;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -24,8 +25,13 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private const int MaxTerminalEntries = 500;
         private const string InitialHandshakeCommand = "[MLAstroRPA-TC]\n";
         private const string ConnectionCheckCommand = "?\n";
-        private const string ExpectedHandshakeResponse = "ok";
-        private const int HandshakeTimeoutMilliseconds = 1000;
+        public const int HandshakeTimeoutMinMilliseconds = 100;
+        public const int HandshakeTimeoutMaxMilliseconds = 5000;
+        private int _handshakeTimeoutMilliseconds = 300;
+
+        public const int PollingIntervalMinMilliseconds = 100;
+        public const int PollingIntervalMaxMilliseconds = 1000;
+        private int _pollingIntervalMilliseconds = 300;
 
         // Track all instances to control timers globally
         private static readonly List<SerialConnectionService> _allInstances = new();
@@ -69,16 +75,19 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private readonly PluginSettings _settings;
         private readonly StringBuilder _telemetryBuffer = new();
         private bool _pauseTelemetryUpdates;
+        private bool _suspendSettingsSync;
+        private volatile bool _applyingTelemetrySettings;
         private SerialPort _serialPort;
         private string[] _availablePorts = Array.Empty<string>();
         private string _connectionStatus = "Disconnected";
         private string _handshakeStatus = string.Empty;
+        private string _firmwareVersion = "unknown";
         private bool _hexDisplay;
         private readonly object _responseSync = new();
         private readonly SemaphoreSlim _serialOperationSemaphore = new(1, 1);
-        private readonly StringBuilder _responseBuffer = new();
-        private TaskCompletionSource<bool> _pendingOkResponse;
-        private bool _receivedAnyResponse;
+        private readonly StringBuilder _lineBuffer = new();
+        private TaskCompletionSource<bool> _pendingCommandTcs;
+        private TaskCompletionSource<bool> _anyResponseTcs;
         private System.Timers.Timer _connectionCheckTimer;
         private int _connectionCheckInProgress;
 
@@ -90,6 +99,10 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         public SerialConnectionService(PluginSettings settings)
         {
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+
+            // Load persisted timing settings (clamped to valid ranges)
+            _handshakeTimeoutMilliseconds = Math.Clamp(_settings.HandshakeTimeoutMilliseconds, HandshakeTimeoutMinMilliseconds, HandshakeTimeoutMaxMilliseconds);
+            _pollingIntervalMilliseconds = Math.Clamp(_settings.PollingIntervalMilliseconds, PollingIntervalMinMilliseconds, PollingIntervalMaxMilliseconds);
 
             // Register this instance
             lock (_instancesLock)
@@ -135,6 +148,49 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             }
         }
 
+        public int HandshakeTimeoutMilliseconds
+        {
+            get => _handshakeTimeoutMilliseconds;
+            set
+            {
+                var clamped = Math.Clamp(value, HandshakeTimeoutMinMilliseconds, HandshakeTimeoutMaxMilliseconds);
+                if (_handshakeTimeoutMilliseconds == clamped)
+                {
+                    return;
+                }
+
+                _handshakeTimeoutMilliseconds = clamped;
+                _settings.HandshakeTimeoutMilliseconds = clamped;
+                OnPropertyChanged();
+                Logger.Info($"[MLAstro] Handshake timeout set to {clamped} ms");
+            }
+        }
+
+        public int PollingIntervalMilliseconds
+        {
+            get => _pollingIntervalMilliseconds;
+            set
+            {
+                var clamped = Math.Clamp(value, PollingIntervalMinMilliseconds, PollingIntervalMaxMilliseconds);
+                if (_pollingIntervalMilliseconds == clamped)
+                {
+                    return;
+                }
+
+                _pollingIntervalMilliseconds = clamped;
+                _settings.PollingIntervalMilliseconds = clamped;
+                OnPropertyChanged();
+
+                // Apply the new interval to the running poll timer if it exists
+                if (_connectionCheckTimer != null)
+                {
+                    _connectionCheckTimer.Interval = clamped;
+                }
+
+                Logger.Info($"[MLAstro] Polling interval set to {clamped} ms");
+            }
+        }
+
         public string ConnectionStatus
         {
             get => _connectionStatus;
@@ -160,6 +216,21 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             }
         }
 
+        public string FirmwareVersion
+        {
+            get => _firmwareVersion;
+            private set
+            {
+                if (_firmwareVersion == value)
+                {
+                    return;
+                }
+
+                _firmwareVersion = value;
+                OnPropertyChanged();
+            }
+        }
+
         public bool PauseTelemetryUpdates
         {
             get => _pauseTelemetryUpdates;
@@ -169,6 +240,26 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 OnPropertyChanged();
             }
         }
+
+        /// <summary>
+        /// When true, telemetry will not write parsed settings back to <see cref="PluginSettings"/>.
+        /// Used while the user is editing configuration fields so polling does not overwrite their input.
+        /// </summary>
+        public bool SuspendSettingsSync
+        {
+            get => _suspendSettingsSync;
+            set
+            {
+                _suspendSettingsSync = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// True while settings are being written programmatically from parsed telemetry.
+        /// Allows callers to distinguish device-driven updates from user edits.
+        /// </summary>
+        public bool IsApplyingTelemetrySettings => _applyingTelemetrySettings;
 
         public void RefreshPorts()
         {
@@ -279,6 +370,37 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             Logger.Info($"[MLAstro] Serial disconnected: {portName}");
         }
 
+        public bool ResetEsp32()
+        {
+            if (_serialPort?.IsOpen != true)
+            {
+                ConnectionStatus = "Not connected";
+                return false;
+            }
+
+            try
+            {
+                // Standard ESP32 auto-reset sequence over DTR/RTS:
+                // DTR=false keeps GPIO0 high (normal boot), RTS toggles EN (reset).
+                _serialPort.DtrEnable = false;
+                _serialPort.RtsEnable = true;
+                Thread.Sleep(100);
+                _serialPort.RtsEnable = false;
+                _serialPort.DtrEnable = false;
+
+                ConnectionStatus = "ESP32 reset";
+                AppendTerminalEntry(SerialTerminalEntry.Disconnected("ESP32 reset via serial"));
+                Logger.Info("[MLAstro] ESP32 reset via DTR/RTS");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ConnectionStatus = $"ESP32 reset failed: {ex.Message}";
+                Logger.Warning($"[MLAstro] ESP32 reset failed: {ex.Message}");
+                return false;
+            }
+        }
+
         public bool Send(string text)
         {
             if (!IsConnected)
@@ -329,7 +451,27 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             return Send("?\n");
         }
 
-        public string BuildConfigurationCommand(PluginSettings settings)
+        public bool QueryApPassword()
+        {
+            if (!IsConnected)
+            {
+                return false;
+            }
+
+            return Send("APpa:?\n");
+        }
+
+        public bool QueryStaPassword()
+        {
+            if (!IsConnected)
+            {
+                return false;
+            }
+
+            return Send("STAp:?\n");
+        }
+
+        public string BuildConfigurationCommand(PluginSettings settings, bool includeSaveAndReboot = true)
         {
             if (settings == null)
             {
@@ -373,20 +515,27 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             parts.Add($"AzBl:{settings.BacklashAz}");
             parts.Add($"AlBl:{settings.BacklashAlt}");
 
+            // P.A Overshoot
+            parts.Add($"Over:{(settings.OvershootEnabled ? 1 : 0)}");
+            parts.Add($"OvUp:{(settings.OvershootMoveUp ? 1 : 0)}");
+            parts.Add($"OvDn:{(settings.OvershootMoveDown ? 1 : 0)}");
+            parts.Add($"OvD:{settings.OvershootDegrees}");
+            parts.Add($"OvM:{settings.OvershootMinutes}");
+            parts.Add($"OvS:{settings.OvershootSeconds}");
+
             // WiFi Settings
             if (!string.IsNullOrWhiteSpace(settings.ApSsid))
                 parts.Add($"APss:{settings.ApSsid}");
-            if (!string.IsNullOrWhiteSpace(settings.ApPass))
-                parts.Add($"APpa:{settings.ApPass}");
             if (!string.IsNullOrWhiteSpace(settings.ApIp))
                 parts.Add($"APip:{settings.ApIp}");
             if (!string.IsNullOrWhiteSpace(settings.WifiSsid))
                 parts.Add($"STAs:{settings.WifiSsid}");
-            if (!string.IsNullOrWhiteSpace(settings.WifiPass))
-                parts.Add($"STAp:{settings.WifiPass}");
 
-            // Add Save&Reboot command at the end
-            parts.Add("Save&Reboot:1");
+            // Add Save&Reboot command at the end when persisting settings
+            if (includeSaveAndReboot)
+            {
+                parts.Add("Save&Reboot:1");
+            }
 
             return string.Join(",", parts) + "\n";
         }
@@ -421,45 +570,133 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 AppendTerminalEntry(SerialTerminalEntry.Received(buffer, _serialPort.Encoding, HexDisplay));
                 var receivedText = _serialPort.Encoding.GetString(buffer);
 
-                // Log received data for debugging
-                if (receivedText.Contains("<") || receivedText.Contains(">"))
+                // Frame the incoming stream by newline and classify each complete line into:
+                //  1) Telemetry (<...), 2) pending command answer (ok/error), 3) spontaneous firmware responses.
+                _lineBuffer.Append(receivedText);
+                var buf = _lineBuffer.ToString();
+                int nl;
+                while ((nl = buf.IndexOf('\n')) >= 0)
                 {
-                    Logger.Info($"[MLAstro] Telemetry received: {receivedText.Substring(0, Math.Min(200, receivedText.Length))}...");
-                }
-                else if (receivedText.Contains("ok"))
-                {
-                    Logger.Info($"[MLAstro] OK response received");
-                }
-                else if (receivedText.Contains("error"))
-                {
-                    Logger.Warning($"[MLAstro] Error response: {receivedText}");
-                }
-                else if (receivedText.Contains("COMPLETED"))
-                {
-                    Logger.Info($"[MLAstro] Completion event: {receivedText}");
-                }
-
-                // Check for DISCONNECTED signal from device - auto disconnect
-                if (receivedText.Contains("DISCONNECTED"))
-                {
-                    Logger.Info("[MLAstro] DISCONNECTED signal received from device - auto disconnecting");
-                    Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
+                    var line = buf.Substring(0, nl).TrimEnd('\r');
+                    buf = buf.Substring(nl + 1);
+                    if (line.Length > 0)
                     {
-                        Disconnect();
-                    }));
-                    return;
+                        RouteLine(line);
+                    }
                 }
-
-                // Check for completion events
-                CheckForCompletionEvents(receivedText);
-
-                ProcessPendingResponse(buffer, _serialPort.Encoding);
-                ProcessTelemetryData(receivedText);
+                _lineBuffer.Clear();
+                _lineBuffer.Append(buf);
             }
             catch (Exception ex)
             {
                 Logger.Warning($"[MLAstro] Serial receive failed: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Routes a complete, newline-terminated line into one of 3 buckets:
+        ///  1) Telemetry (starts with '&lt;'),
+        ///  2) Answer to a pending command ('ok' / 'error...'),
+        ///  3) Spontaneous firmware response (COMPLETED, DISCONNECTED, APpa:/STAp:, etc.).
+        /// </summary>
+        private void RouteLine(string line)
+        {
+            // Bucket 1: Telemetry
+            if (line.StartsWith("<"))
+            {
+                LogReceivedLine(line);
+                ProcessTelemetryData(line);
+                TryUpdateDeviceInfo(line);
+                CheckForCompletionEvents(line);
+                SignalAnyResponse();
+                return;
+            }
+
+            // Bucket 2: Answer to a pending command
+            if (line.StartsWith("ok", StringComparison.OrdinalIgnoreCase))
+            {
+                LogReceivedLine(line);
+                TryUpdateDeviceInfo(line); // handshake: "ok,firmware...,SN:.."
+                ResolvePendingCommand(success: true);
+                SignalAnyResponse();
+                return;
+            }
+            if (line.StartsWith("error", StringComparison.OrdinalIgnoreCase))
+            {
+                LogReceivedLine(line);
+                ResolvePendingCommand(success: false);
+                SignalAnyResponse();
+                return;
+            }
+
+            // Bucket 3: Spontaneous firmware response
+            LogReceivedLine(line);
+            ProcessWifiPasswordResponses(line);
+            CheckForCompletionEvents(line);
+            TryUpdateDeviceInfo(line);
+            HandleDisconnected(line);
+            SignalAnyResponse();
+        }
+
+        private void LogReceivedLine(string line)
+        {
+            if (line.StartsWith("<"))
+            {
+                Logger.Info($"[MLAstro] Telemetry received: {line.Substring(0, Math.Min(200, line.Length))}...");
+            }
+            else if (line.StartsWith("ok", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Info("[MLAstro] OK response received");
+            }
+            else if (line.StartsWith("error", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Warning($"[MLAstro] Error response: {line}");
+            }
+            else if (line.Contains("COMPLETED"))
+            {
+                Logger.Info($"[MLAstro] Completion event: {line}");
+            }
+            else if (line.Contains("DISCONNECTED"))
+            {
+                Logger.Info("[MLAstro] DISCONNECTED signal received from device");
+            }
+        }
+
+        private void HandleDisconnected(string line)
+        {
+            if (line.Contains("DISCONNECTED"))
+            {
+                Logger.Info("[MLAstro] DISCONNECTED signal received from device - auto disconnecting");
+                Application.Current?.Dispatcher?.BeginInvoke(new Action(Disconnect));
+            }
+        }
+
+        private void ResolvePendingCommand(bool success)
+        {
+            lock (_responseSync)
+            {
+                _pendingCommandTcs?.TrySetResult(success);
+                _pendingCommandTcs = null;
+            }
+        }
+
+        private void SignalAnyResponse()
+        {
+            lock (_responseSync) _anyResponseTcs?.TrySetResult(true);
+        }
+
+        /// <summary>
+        /// Sends the handshake sequence and waits for the expected response.
+        /// Used by auto-reconnect so the handshake can be retried until the firmware is ready.
+        /// </summary>
+        public async Task<bool> SendHandshakeAsync()
+        {
+            return await SendAndAwaitOkAsync(InitialHandshakeCommand).ConfigureAwait(false);
+        }
+
+        public async Task<bool> SendCommandAndAwaitOkAsync(string text)
+        {
+            return await SendAndAwaitOkAsync(text).ConfigureAwait(false);
         }
 
         private async Task StartHandshakeAndConnectionChecksAsync()
@@ -479,7 +716,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return;
             }
 
-            _connectionCheckTimer = new System.Timers.Timer(1000)
+            _connectionCheckTimer = new System.Timers.Timer(_pollingIntervalMilliseconds)
             {
                 AutoReset = true
             };
@@ -515,7 +752,11 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
             try
             {
-                await SendAndAwaitOkAsync(ConnectionCheckCommand).ConfigureAwait(false);
+                // The device is alive if it answers with ANY line within the timeout.
+                // This avoids the old bug where '?' returns telemetry (not "ok"), so waiting
+                // for an explicit "ok" could spuriously report "NO ANSWER".
+                var alive = await SendAndAwaitAnyAsync(ConnectionCheckCommand).ConfigureAwait(false);
+                UpdateHandshakeStatus(alive);
             }
             finally
             {
@@ -530,8 +771,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return false;
             }
 
-            TaskCompletionSource<bool> pendingResponse = null;
-            var receivedData = false;
+            TaskCompletionSource<bool> pending = null;
 
             await _serialOperationSemaphore.WaitAsync().ConfigureAwait(false);
             try
@@ -541,58 +781,132 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                     return false;
                 }
 
-                pendingResponse = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 lock (_responseSync)
                 {
-                    _responseBuffer.Clear();
-                    _receivedAnyResponse = false;
-                    _pendingOkResponse = pendingResponse;
+                    _pendingCommandTcs = pending;
                 }
 
                 var data = _serialPort.Encoding.GetBytes(text);
                 _serialPort.Write(data, 0, data.Length);
                 AppendTerminalEntry(SerialTerminalEntry.Sent(data, _serialPort.Encoding, HexDisplay));
 
-                var completedTask = await Task.WhenAny(pendingResponse.Task, Task.Delay(HandshakeTimeoutMilliseconds)).ConfigureAwait(false);
+                var completedTask = await Task.WhenAny(pending.Task, Task.Delay(HandshakeTimeoutMilliseconds)).ConfigureAwait(false);
 
-                lock (_responseSync)
-                {
-                    receivedData = _receivedAnyResponse;
-                }
-
-                var gotOk = completedTask == pendingResponse.Task && pendingResponse.Task.Result;
-
-                // Only update to "NO ANSWER" if we didn't receive any data at all
-                if (!gotOk && !receivedData)
-                {
-                    UpdateHandshakeStatus(false);
-                }
-                else if (gotOk)
-                {
-                    UpdateHandshakeStatus(true);
-                }
-                // If received data but not "ok", don't change the status
-
+                var gotOk = completedTask == pending.Task && pending.Task.Result;
+                UpdateHandshakeStatus(gotOk);
                 return gotOk;
             }
             catch (Exception ex)
             {
-                Logger.Warning($"[MLAstro] Serial handshake/check failed: {ex.Message}");
+                Logger.Warning($"[MLAstro] Serial handshake failed: {ex.Message}");
                 return false;
             }
             finally
             {
                 lock (_responseSync)
                 {
-                    if (ReferenceEquals(_pendingOkResponse, pendingResponse))
+                    if (ReferenceEquals(_pendingCommandTcs, pending))
                     {
-                        _pendingOkResponse = null;
+                        _pendingCommandTcs = null;
                     }
-
-                    _responseBuffer.Clear();
                 }
 
                 _serialOperationSemaphore.Release();
+            }
+        }
+
+        private async Task<bool> SendAndAwaitAnyAsync(string text)
+        {
+            if (!IsConnected || string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            TaskCompletionSource<bool> any = null;
+
+            await _serialOperationSemaphore.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (!IsConnected || _serialPort == null)
+                {
+                    return false;
+                }
+
+                any = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                lock (_responseSync)
+                {
+                    _anyResponseTcs = any;
+                }
+
+                var data = _serialPort.Encoding.GetBytes(text);
+                _serialPort.Write(data, 0, data.Length);
+                AppendTerminalEntry(SerialTerminalEntry.Sent(data, _serialPort.Encoding, HexDisplay));
+
+                var completedTask = await Task.WhenAny(any.Task, Task.Delay(HandshakeTimeoutMilliseconds)).ConfigureAwait(false);
+                return completedTask == any.Task;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[MLAstro] Serial connection check failed: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                lock (_responseSync) { _anyResponseTcs = null; }
+                _serialOperationSemaphore.Release();
+            }
+        }
+
+        private void TryUpdateDeviceInfo(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return;
+            }
+
+            var firmwareMatch = Regex.Match(text, @"firmware\s+(\d+\.\d+\.\d+)", RegexOptions.IgnoreCase);
+            if (firmwareMatch.Success)
+            {
+                FirmwareVersion = firmwareMatch.Groups[1].Value;
+                Logger.Info($"[MLAstro] Device firmware detected: {FirmwareVersion}");
+            }
+        }
+
+        private void ProcessWifiPasswordResponses(string receivedText)
+        {
+            if (string.IsNullOrWhiteSpace(receivedText))
+            {
+                return;
+            }
+
+            try
+            {
+                var apMatch = Regex.Match(receivedText, @"\bAPpa:([^\r\n]+)");
+                if (apMatch.Success)
+                {
+                    var value = apMatch.Groups[1].Value.Trim();
+                    if (!string.IsNullOrEmpty(value) && value != "?")
+                    {
+                        _settings.ApPass = value;
+                        Logger.Info("[MLAstro] AP password updated from device");
+                    }
+                }
+
+                var staMatch = Regex.Match(receivedText, @"\bSTAp:([^\r\n]+)");
+                if (staMatch.Success)
+                {
+                    var value = staMatch.Groups[1].Value.Trim();
+                    if (!string.IsNullOrEmpty(value) && value != "?")
+                    {
+                        _settings.WifiPass = value;
+                        Logger.Info("[MLAstro] Station password updated from device");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[MLAstro] WiFi password response parsing failed: {ex.Message}");
             }
         }
 
@@ -625,34 +939,6 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 {
                     CompletionReceived?.Invoke(this, "HOME");
                     Logger.Info("[MLAstro] Home return completed");
-                }
-            }
-        }
-
-        private void ProcessPendingResponse(byte[] buffer, Encoding encoding)
-        {
-            if (buffer == null || buffer.Length == 0)
-            {
-                return;
-            }
-
-            lock (_responseSync)
-            {
-                if (_pendingOkResponse == null)
-                {
-                    return;
-                }
-
-                // Mark that we received data
-                _receivedAnyResponse = true;
-
-                var receivedText = (encoding ?? Encoding.UTF8).GetString(buffer);
-                _responseBuffer.Append(receivedText);
-
-                var bufferContent = _responseBuffer.ToString();
-                if (bufferContent.Contains(ExpectedHandshakeResponse, StringComparison.Ordinal))
-                {
-                    _pendingOkResponse.TrySetResult(true);
                 }
             }
         }
@@ -693,17 +979,25 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                             {
                                 Logger.Info($"[MLAstro] Telemetry parsed - Status: {telemetryData.Status}, AzPos: {telemetryData.AzPosition}, AltPos: {telemetryData.AltPosition}");
                                 Logger.Info($"[MLAstro] Raising TelemetryDataReceived event (instance: {this.GetHashCode()}, subscribers: {TelemetryDataReceived?.GetInvocationList().Length ?? 0})");
-                                TelemetryDataReceived?.Invoke(this, new TelemetryDataEventArgs(telemetryData));
+                                InvokeOnUiThread(() => TelemetryDataReceived?.Invoke(this, new TelemetryDataEventArgs(telemetryData)));
                             }
                             else
                             {
                                 Logger.Warning("[MLAstro] ParseTelemetryLine returned null");
                             }
 
-                            // Only update settings if not paused
-                            if (!PauseTelemetryUpdates)
+                            // Only update settings if not paused and not suspended (user is editing)
+                            if (!PauseTelemetryUpdates && !SuspendSettingsSync)
                             {
-                                TelemetryParser.ParseAndApplySettings(telemetryLine, _settings);
+                                _applyingTelemetrySettings = true;
+                                try
+                                {
+                                    TelemetryParser.ParseAndApplySettings(telemetryLine, _settings);
+                                }
+                                finally
+                                {
+                                    _applyingTelemetrySettings = false;
+                                }
                                 Logger.Info("[MLAstro] Telemetry data received and parsed");
                             }
 
@@ -740,9 +1034,10 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
             lock (_responseSync)
             {
-                _responseBuffer.Clear();
-                _pendingOkResponse?.TrySetResult(false);
-                _pendingOkResponse = null;
+                _pendingCommandTcs?.TrySetResult(false);
+                _pendingCommandTcs = null;
+                _anyResponseTcs?.TrySetResult(false);
+                _anyResponseTcs = null;
             }
         }
 
@@ -1438,6 +1733,32 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                     case "AlBl":
                         if (int.TryParse(value, out var altBacklash))
                             settings.BacklashAlt = altBacklash;
+                        break;
+
+                    // P.A Overshoot
+                    case "Over":
+                        if (int.TryParse(value, out var overshootEnabled))
+                            settings.OvershootEnabled = overshootEnabled != 0;
+                        break;
+                    case "OvUp":
+                        if (int.TryParse(value, out var overshootUp))
+                            settings.OvershootMoveUp = overshootUp != 0;
+                        break;
+                    case "OvDn":
+                        if (int.TryParse(value, out var overshootDown))
+                            settings.OvershootMoveDown = overshootDown != 0;
+                        break;
+                    case "OvD":
+                        if (int.TryParse(value, out var overshootDegrees))
+                            settings.OvershootDegrees = overshootDegrees;
+                        break;
+                    case "OvM":
+                        if (int.TryParse(value, out var overshootMinutes))
+                            settings.OvershootMinutes = overshootMinutes;
+                        break;
+                    case "OvS":
+                        if (int.TryParse(value, out var overshootSeconds))
+                            settings.OvershootSeconds = overshootSeconds;
                         break;
 
                     // WiFi Settings

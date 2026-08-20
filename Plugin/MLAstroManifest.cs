@@ -22,20 +22,28 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
     [Export(typeof(IPluginManifest))]
     public class MLAstroManifest : PluginBase, INotifyPropertyChanged, IDisposable
     {
-        private static readonly int[] DefaultBaudRates = { 9600, 19200, 38400, 57600, 115200, 230400 };
+        private static readonly int[] DefaultBaudRates = { 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 };
 
         private readonly SerialConnectionService _serialConnectionService;
+        private readonly PolarAlignmentDockVM _polarAlignmentDockVM;
         private ResourceDictionary _pluginResourceDictionary;
         private FileSystemWatcher _pluginFolderWatcher;
         private bool _disposed = false;
         private bool _isHexInputEnabled;
         private string _serialTerminalInput;
         private bool _isModifyMode;
+        private bool _hasUserSettingsEdits;
         private string _autoReconnectStatus = string.Empty;
         private bool _isHandshakeSuccessful;
         private string _savedSettingsSnapshot;
+        private bool _showApPassword;
+        private bool _showStaPassword;
+        private bool _apPasswordEdited;
+        private bool _staPasswordEdited;
 
         public PluginSettings Settings { get; }
+
+        public PolarAlignmentDockVM PolarAlignmentVM => _polarAlignmentDockVM;
 
         public PolarAlignmentDataSourceMode[] AvailableDataSourceModes { get; } = Enum.GetValues<PolarAlignmentDataSourceMode>();
 
@@ -151,6 +159,18 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
         }
 
+        public int HandshakeTimeoutMilliseconds
+        {
+            get => _serialConnectionService.HandshakeTimeoutMilliseconds;
+            set => _serialConnectionService.HandshakeTimeoutMilliseconds = value;
+        }
+
+        public int PollingIntervalMilliseconds
+        {
+            get => _serialConnectionService.PollingIntervalMilliseconds;
+            set => _serialConnectionService.PollingIntervalMilliseconds = value;
+        }
+
         public string AutoReconnectStatus
         {
             get => _autoReconnectStatus;
@@ -177,6 +197,66 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
         }
 
+        public bool ShowApPassword
+        {
+            get => _showApPassword;
+            private set
+            {
+                if (_showApPassword == value)
+                {
+                    return;
+                }
+
+                _showApPassword = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ApPassDisplay));
+            }
+        }
+
+        public bool ShowStaPassword
+        {
+            get => _showStaPassword;
+            private set
+            {
+                if (_showStaPassword == value)
+                {
+                    return;
+                }
+
+                _showStaPassword = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(WifiPassDisplay));
+            }
+        }
+
+        public string ApPassDisplay
+        {
+            get => ShowApPassword ? Settings.ApPass : "********";
+            set
+            {
+                if (ShowApPassword && value != Settings.ApPass)
+                {
+                    Settings.ApPass = value;
+                    _apPasswordEdited = true;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        public string WifiPassDisplay
+        {
+            get => ShowStaPassword ? Settings.WifiPass : "********";
+            set
+            {
+                if (ShowStaPassword && value != Settings.WifiPass)
+                {
+                    Settings.WifiPass = value;
+                    _staPasswordEdited = true;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
         public ICommand RefreshComPortsCommand { get; }
 
         public ICommand ToggleSerialConnectionCommand { get; }
@@ -187,26 +267,46 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
 
         public ICommand SaveAllSettingsCommand { get; }
 
+        public ICommand ApplySettingsCommand { get; }
+
+        public ICommand RebootCommand { get; }
+
+        public ICommand ResetEsp32Command { get; }
+
+        public ICommand ToggleShowApPasswordCommand { get; }
+
+        public ICommand ToggleShowStaPasswordCommand { get; }
+
         [ImportingConstructor]
-        public MLAstroManifest(PluginSettings settings, SerialConnectionService serialConnectionService)
+        public MLAstroManifest(PluginSettings settings, SerialConnectionService serialConnectionService, PolarAlignmentDockVM polarAlignmentDockVM)
         {
             Settings = settings;
             _serialConnectionService = serialConnectionService;
+            _polarAlignmentDockVM = polarAlignmentDockVM;
 
             RefreshComPortsCommand = new RelayCommand(RefreshComPorts);
             ToggleSerialConnectionCommand = new RelayCommand(ToggleSerialConnection);
             SendSerialCommand = new RelayCommand(SendSerial);
             ClearSerialTerminalCommand = new RelayCommand(ClearSerialTerminal);
             SaveAllSettingsCommand = new RelayCommand(SaveAllSettings);
+            ApplySettingsCommand = new RelayCommand(ApplySettings);
+            RebootCommand = new RelayCommand(ResetEsp32);
+            ResetEsp32Command = new RelayCommand(ResetEsp32);
+            ToggleShowApPasswordCommand = new RelayCommand(ToggleShowApPassword);
+            ToggleShowStaPasswordCommand = new RelayCommand(ToggleShowStaPassword);
 
             Settings.PropertyChanged += OnSettingsPropertyChanged;
             _serialConnectionService.PropertyChanged += OnSerialConnectionServicePropertyChanged;
             RefreshComPorts();
 
-            // Hook into application exit to ensure cleanup
+            // Hook into application exit to ensure cleanup - must run on UI thread
             if (Application.Current != null)
             {
-                Application.Current.Exit += OnApplicationExit;
+                try
+                {
+                    Application.Current.Dispatcher.Invoke(() => Application.Current.Exit += OnApplicationExit);
+                }
+                catch { }
             }
 
             // Setup FileSystemWatcher to detect when plugin is being uninstalled
@@ -217,11 +317,20 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             {
                 if (Application.Current != null)
                 {
-                    _pluginResourceDictionary = new ResourceDictionary
+                    try
                     {
-                        Source = new Uri("pack://application:,,,/MLAstro_Robotic_Polar_Alignment;component/Dockview/Dockable.xaml", UriKind.Absolute)
-                    };
-                    Application.Current.Resources.MergedDictionaries.Add(_pluginResourceDictionary);
+                        // Create and add ResourceDictionary on UI thread because ResourceDictionary/DependencyObject
+                        // must be owned by the UI thread's Dispatcher.
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            _pluginResourceDictionary = new ResourceDictionary
+                            {
+                                Source = new Uri("pack://application:,,,/MLAstro_Robotic_Polar_Alignment;component/Dockview/Dockable.xaml", UriKind.Absolute)
+                            };
+                            Application.Current.Resources.MergedDictionaries.Add(_pluginResourceDictionary);
+                        });
+                    }
+                    catch { }
                 }
 
                 var iconLocatorType = AppDomain.CurrentDomain.GetAssemblies()
@@ -236,7 +345,12 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                     if (registerMethod != null)
                     {
                         var uri = new Uri("pack://application:,,,/MLAstro_Robotic_Polar_Alignment;component/Resources/MLAstroIcons.xaml", UriKind.Absolute);
-                        registerMethod.Invoke(null, new object[] { uri });
+                        try
+                        {
+                            // Ensure any UI-related registration runs on the UI thread
+                            Application.Current?.Dispatcher?.Invoke(() => registerMethod.Invoke(null, new object[] { uri }));
+                        }
+                        catch { }
                     }
                 }
             }
@@ -331,7 +445,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                 {
                     try
                     {
-                        var dockableVM = PolarAlignmentDockVM.Instance;
+                        var dockableVM = _polarAlignmentDockVM;
                         if (dockableVM != null)
                         {
                             Logger.Info("[MLAstro] Closing dockable panel...");
@@ -461,9 +575,39 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
         }
 
+        private void ToggleShowApPassword()
+        {
+            ShowApPassword = !ShowApPassword;
+
+            if (ShowApPassword)
+            {
+                _serialConnectionService.QueryApPassword();
+            }
+        }
+
+        private void ToggleShowStaPassword()
+        {
+            ShowStaPassword = !ShowStaPassword;
+
+            if (ShowStaPassword)
+            {
+                _serialConnectionService.QueryStaPassword();
+            }
+        }
+
         private void ClearSerialTerminal()
         {
             _serialConnectionService.ClearTerminal();
+        }
+
+        private async void ResetEsp32()
+        {
+            if (!_serialConnectionService.ResetEsp32())
+            {
+                return;
+            }
+
+            await AutoReconnectAsync(3);
         }
 
         private async void SaveAllSettingsInternal()
@@ -475,7 +619,21 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
 
             try
             {
-                // Build configuration command string
+                if (_apPasswordEdited && !await _serialConnectionService.SendCommandAndAwaitOkAsync($"APpa:{Settings.ApPass}\n"))
+                {
+                    Logger.Warning("[MLAstro] AP password update was not acknowledged");
+                    return;
+                }
+                _apPasswordEdited = false;
+
+                if (_staPasswordEdited && !await _serialConnectionService.SendCommandAndAwaitOkAsync($"STAp:{Settings.WifiPass}\n"))
+                {
+                    Logger.Warning("[MLAstro] Station password update was not acknowledged");
+                    return;
+                }
+                _staPasswordEdited = false;
+
+                // Password updates are sent separately above; send the remaining configuration last.
                 var configCommand = _serialConnectionService.BuildConfigurationCommand(Settings);
 
                 // Send to device
@@ -501,62 +659,112 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
         }
 
-        private void SaveAllSettings()
+        private void ApplySettings()
         {
-            // This is now handled by IsModifyMode property setter
-            // Keep for backward compatibility with command binding
-            if (IsModifyMode)
+            if (!IsSerialConnected)
             {
-                IsModifyMode = false; // This will trigger SaveAllSettingsInternal
+                Logger.Warning("[MLAstro] Apply settings skipped - not connected");
+                return;
+            }
+
+            var configCommand = _serialConnectionService.BuildConfigurationCommand(Settings, includeSaveAndReboot: false);
+            var sent = _serialConnectionService.Send(configCommand);
+            if (sent)
+            {
+                Logger.Info("[MLAstro] Settings applied to device memory");
+                ResumeSettingsSync();
             }
         }
 
-        private async System.Threading.Tasks.Task AutoReconnectAsync()
+        private void ResumeSettingsSync()
+        {
+            if (_hasUserSettingsEdits)
+            {
+                _hasUserSettingsEdits = false;
+                _serialConnectionService.SuspendSettingsSync = false;
+                Logger.Info("[MLAstro] Telemetry settings sync resumed after apply/save");
+            }
+        }
+
+        private void SaveAllSettings()
+        {
+            SaveAllSettingsInternal();
+        }
+
+        private async System.Threading.Tasks.Task AutoReconnectAsync(int countdownSeconds = 5)
         {
             try
             {
-                // Countdown 5 seconds
-                for (int i = 5; i > 0; i--)
+                // Countdown before first reconnect attempt (firmware needs time to reboot)
+                for (int i = countdownSeconds; i > 0; i--)
                 {
                     AutoReconnectStatus = $"Reconnecting in {i}s...";
                     await System.Threading.Tasks.Task.Delay(1000);
                 }
 
-                AutoReconnectStatus = "Connecting...";
+                var connected = false;
+                var handshakeSuccess = false;
 
-                // Try to reconnect
-                RefreshComPorts();
-                var connected = _serialConnectionService.Connect(Settings.ComPort, Settings.BaudRate);
+                // Firmware reboot takes ~5s and the COM port may re-enumerate, so retry
+                // connect + handshake several times instead of failing after a single attempt.
+                const int maxConnectAttempts = 10;
+                const int maxHandshakeAttempts = 5;
 
-                if (connected)
+                for (int attempt = 0; attempt < maxConnectAttempts; attempt++)
                 {
-                    // Wait up to 3 seconds for handshake
-                    var handshakeSuccess = false;
-                    for (int i = 0; i < 30; i++) // 30 x 100ms = 3s
+                    if (attempt > 0)
                     {
-                        await System.Threading.Tasks.Task.Delay(100);
+                        AutoReconnectStatus = $"Waiting for device... (retry {attempt + 1}/{maxConnectAttempts})";
+                        await System.Threading.Tasks.Task.Delay(1000);
+                    }
+
+                    RefreshComPorts();
+
+                    AutoReconnectStatus = $"Connecting... (attempt {attempt + 1}/{maxConnectAttempts})";
+                    connected = _serialConnectionService.Connect(Settings.ComPort, Settings.BaudRate);
+                    if (!connected)
+                    {
+                        continue;
+                    }
+
+                    // Retry handshake until the firmware is ready to answer
+                    handshakeSuccess = false;
+                    for (int h = 0; h < maxHandshakeAttempts; h++)
+                    {
                         if (_serialConnectionService.HandshakeStatus == "OK!")
                         {
                             handshakeSuccess = true;
                             break;
                         }
+
+                        var ok = await _serialConnectionService.SendHandshakeAsync();
+                        if (ok)
+                        {
+                            handshakeSuccess = true;
+                            break;
+                        }
+
+                        await System.Threading.Tasks.Task.Delay(500);
                     }
 
                     if (handshakeSuccess)
                     {
-                        AutoReconnectStatus = "Connected";
-                        await System.Threading.Tasks.Task.Delay(2000);
-                        AutoReconnectStatus = string.Empty;
+                        break;
                     }
-                    else
-                    {
-                        AutoReconnectStatus = "Handshake timeout";
-                        ShowConnectionError();
-                    }
+
+                    // Firmware not ready on this port yet - disconnect and retry
+                    _serialConnectionService.Disconnect();
+                }
+
+                if (connected && handshakeSuccess)
+                {
+                    AutoReconnectStatus = "Connected";
+                    await System.Threading.Tasks.Task.Delay(2000);
+                    AutoReconnectStatus = string.Empty;
                 }
                 else
                 {
-                    AutoReconnectStatus = "Connection failed";
+                    AutoReconnectStatus = string.Empty;
                     ShowConnectionError();
                 }
             }
@@ -594,9 +802,33 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
 
         private void OnSettingsPropertyChanged(object sender, PropertyChangedEventArgs e)
         {
+            // Detect user edits (not telemetry-driven) while connected and pause telemetry settings
+            // sync so polling does not overwrite values the user is typing before Apply.
+            // HandshakeTimeout/PollingInterval are NOT synced from telemetry, so they don't count as dirty.
+            if (_serialConnectionService.IsConnected
+                && !_serialConnectionService.IsApplyingTelemetrySettings
+                && !_hasUserSettingsEdits
+                && e.PropertyName != nameof(PluginSettings.HandshakeTimeoutMilliseconds)
+                && e.PropertyName != nameof(PluginSettings.PollingIntervalMilliseconds))
+            {
+                _hasUserSettingsEdits = true;
+                _serialConnectionService.SuspendSettingsSync = true;
+                Logger.Info("[MLAstro] User settings edit detected - telemetry settings sync suspended");
+            }
+
             if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(PluginSettings.ComPort))
             {
                 OnPropertyChanged(nameof(AvailableComPorts));
+            }
+
+            if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(PluginSettings.ApPass))
+            {
+                OnPropertyChanged(nameof(ApPassDisplay));
+            }
+
+            if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(PluginSettings.WifiPass))
+            {
+                OnPropertyChanged(nameof(WifiPassDisplay));
             }
         }
 
@@ -632,6 +864,13 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                     _savedSettingsSnapshot = null;
                     OnPropertyChanged(nameof(IsModifyMode));
                 }
+
+                // Reset user-edit suspension when handshake fails
+                if (!isSuccess)
+                {
+                    _hasUserSettingsEdits = false;
+                    _serialConnectionService.SuspendSettingsSync = false;
+                }
             }
 
             if (string.IsNullOrEmpty(e.PropertyName)
@@ -644,6 +883,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                 if (!_serialConnectionService.IsConnected)
                 {
                     IsHandshakeSuccessful = false;
+                    ShowApPassword = false;
+                    ShowStaPassword = false;
 
                     // Reset IsModifyMode when disconnected
                     if (IsModifyMode)
@@ -654,7 +895,23 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                         _savedSettingsSnapshot = null;
                         OnPropertyChanged(nameof(IsModifyMode));
                     }
+
+                    // Reset user-edit suspension when disconnected
+                    _hasUserSettingsEdits = false;
+                    _serialConnectionService.SuspendSettingsSync = false;
                 }
+            }
+
+            if (string.IsNullOrEmpty(e.PropertyName)
+                || e.PropertyName == nameof(SerialConnectionService.HandshakeTimeoutMilliseconds))
+            {
+                OnPropertyChanged(nameof(HandshakeTimeoutMilliseconds));
+            }
+
+            if (string.IsNullOrEmpty(e.PropertyName)
+                || e.PropertyName == nameof(SerialConnectionService.PollingIntervalMilliseconds))
+            {
+                OnPropertyChanged(nameof(PollingIntervalMilliseconds));
             }
 
             if (string.IsNullOrEmpty(e.PropertyName)
@@ -700,31 +957,31 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             {
                 Logger.Info("[MLAstro] MLAstroManifest disposing...");
 
-                // Close dockable window first using static instance
+                // Dispose the polar alignment view model first
                 try
                 {
-                    var dockableVM = PolarAlignmentDockVM.Instance;
-                    Logger.Info($"[MLAstro] PolarAlignmentDockVM.Instance is {(dockableVM != null ? "not null (hash: " + dockableVM.GetHashCode() + ")" : "NULL")}");
+                    var dockableVM = _polarAlignmentDockVM;
+                    Logger.Info($"[MLAstro] PolarAlignmentDockVM is {(dockableVM != null ? "not null (hash: " + dockableVM.GetHashCode() + ")" : "NULL")}");
 
                     if (dockableVM != null)
                     {
-                        Logger.Info("[MLAstro] Closing dockable - setting IsVisible=false, IsClosed=true");
-                        // Hide the dockable first
+                        Logger.Info("[MLAstro] Disposing polar alignment VM - setting IsVisible=false, IsClosed=true");
+                        // Hide the view first
                         dockableVM.IsVisible = false;
                         // Then mark it as closed
                         dockableVM.IsClosed = true;
                         // Dispose resources
                         dockableVM.Dispose();
-                        Logger.Info("[MLAstro] Dockable VM hidden, closed and disposed");
+                        Logger.Info("[MLAstro] Polar alignment VM hidden, closed and disposed");
                     }
                     else
                     {
-                        Logger.Warning("[MLAstro] PolarAlignmentDockVM.Instance is null - cannot close dockable");
+                        Logger.Warning("[MLAstro] PolarAlignmentDockVM is null - cannot dispose polar alignment VM");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Logger.Warning($"[MLAstro] Failed to close dockable: {ex.Message}");
+                    Logger.Warning($"[MLAstro] Failed to dispose polar alignment VM: {ex.Message}");
                 }
 
                 // Remove ResourceDictionary from Application to release assembly reference

@@ -9,6 +9,10 @@ let hasSystemError = false;
 let isSystemCalibrating = false; // Biến lưu trạng thái đang Calib
 let isCalibAutoCenterPending = false; // Biến cờ theo dõi quy trình Auto Center sau Calib
 let isUpdatingFromWS = false; // Cờ chặn gửi lệnh lưu khi đang cập nhật từ Server
+let backendWsConnected = false;
+let backendWsChecked = false;
+let systemLocked = false; // true = đang do PC (Serial) điều khiển -> khóa nút điều khiển web
+let isRebooting = false; // giữ trạng thái REBOOTING cho đến khi reboot hoàn tất
 
 // Chart Variables
 let sgChartCtx = null;
@@ -18,6 +22,24 @@ let sgDataAz = new Array(sgHistoryLength).fill(0);
 let sgDataAlt = new Array(sgHistoryLength).fill(0);
 let csDataAz = new Array(sgHistoryLength).fill(0);
 let csDataAlt = new Array(sgHistoryLength).fill(0);
+let otaPlan = null;
+let otaCurrentStepIndex = -1;
+let otaMode = 'ota';
+let espWebToolsLoader = null;
+let usbFlashProgressHint = 0;
+let usbFlashPhase = 'preparing';
+let activeUsbManifestUrl = null;
+let activeUsbLocalBlobUrls = [];
+
+const ESP_WEB_TOOLS_MODULE_URL = 'https://unpkg.com/esp-web-tools@9/dist/web/install-button.js?module';
+const PUBLIC_USB_UPDATE_URL = 'https://mlastrorpa.github.io/Update/';
+const FLASH_OFFSETS = {
+  bootloader: '0x1000',
+  partitions: '0x8000',
+  firmware: '0x10000',
+  spiffs: '0x290000',
+};
+const FLASH_KIND_ORDER = ['bootloader', 'partitions', 'firmware', 'spiffs'];
 
 // Helper: Trích xuất số phiên bản x.x.x từ chuỗi
 function extractVersion(text) {
@@ -33,6 +55,14 @@ const modalTitle = document.getElementById('modal-title');
 const modalBody = document.getElementById('modal-body');
 const modalFooter = document.getElementById('modal-footer');
 const modalCloseBtn = document.getElementById('modal-close-btn');
+const otaInstallOverlay = document.getElementById('ota-install-overlay');
+const otaInstallRing = document.getElementById('ota-install-ring');
+const otaInstallPercent = document.getElementById('ota-install-percent');
+const otaInstallPhase = document.getElementById('ota-install-phase');
+const otaInstallViewInstalling = document.getElementById('ota-install-view-installing');
+const otaInstallViewSuccess = document.getElementById('ota-install-view-success');
+const otaInstallSuccessCountdown = document.getElementById('ota-install-success-countdown');
+let otaSuccessCountdownTimer = null;
 
 function showModal(title, content, buttons = []) {
   if (!modal) return;
@@ -48,6 +78,7 @@ function showModal(title, content, buttons = []) {
     if (!displayTitle.includes('⚠️')) displayTitle = '⚠️ ' + displayTitle;
   }
 
+  modal.classList.remove('modal-passive', 'modal-detached');
   modalTitle.textContent = displayTitle;
   modalBody.innerHTML = content;
   modalFooter.innerHTML = '';
@@ -56,6 +87,7 @@ function showModal(title, content, buttons = []) {
     const button = document.createElement('button');
     button.textContent = btnInfo.text;
     button.className = `btn ${btnInfo.class || 'btn-secondary'}`;
+    if (btnInfo.id) button.id = btnInfo.id;
     button.addEventListener('click', () => {
       if (btnInfo.callback) {
         btnInfo.callback();
@@ -72,7 +104,237 @@ function showModal(title, content, buttons = []) {
 }
 
 function hideModal() {
-  if (modal) modal.style.display = 'none';
+  if (modal) {
+    modal.style.display = 'none';
+    modal.classList.remove('modal-passive', 'modal-detached');
+  }
+  clearUsbDashboardHost(document.getElementById('update-modal-usb-host'));
+  activeSoftLimitErrorKey = '';
+}
+
+// ===== CONNECTION LOCKED OVERLAY =====
+// Hiển thị overlay khóa toàn màn hình khi bị từ chối kết nối
+// Overlay này KHÔNG THỂ ĐÓNG, chỉ có nút "Close This Page"
+function showConnectionLockedOverlay(reason) {
+  const overlay = document.getElementById('connection-locked-overlay');
+  const reasonEl = document.getElementById('connection-locked-reason');
+  if (!overlay) return;
+
+  if (reasonEl) {
+    reasonEl.textContent = reason;
+  }
+
+  // Ẩn toàn bộ nội dung trang, chỉ hiện overlay
+  overlay.classList.remove('hidden');
+
+  // Vô hiệu hóa tất cả tương tác với trang bên dưới
+  document.body.style.overflow = 'hidden';
+
+  // Dừng mọi kết nối đang chờ
+  if (reconnectInterval) {
+    clearInterval(reconnectInterval);
+    reconnectInterval = null;
+  }
+}
+
+// Gắn sự kiện cho nút "Close This Page"
+document.addEventListener('DOMContentLoaded', () => {
+  const closeBtn = document.getElementById('connection-locked-close-btn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      // Thử đóng tab/cửa sổ, nếu không được thì chuyển hướng
+      if (window.close) {
+        window.close();
+      }
+      // Fallback: nếu window.close() không hoạt động (trên mobile hoặc tab không được mở bởi script)
+      // thì hiển thị thông báo yêu cầu người dùng tự đóng
+      setTimeout(() => {
+        document.body.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0D1B2B;color:#e0e0e0;font-family:sans-serif;text-align:center;padding:20px;">
+            <div>
+              <div style="font-size:64px;margin-bottom:16px;">🔒</div>
+              <h2 style="color:#e74c3c;margin-bottom:12px;">Please Close This Tab</h2>
+              <p style="color:#a0a0a0;">The connection was rejected. Please manually close this browser tab.</p>
+            </div>
+          </div>`;
+      }, 300);
+    });
+  }
+});
+
+function hideOtaProgressUI() {
+  const progressContainer = document.getElementById('ota-progress-container');
+  if (progressContainer) progressContainer.classList.add('hidden');
+}
+
+function showOtaInstallOverlay(phaseText = 'Preparing update...', percent = 0) {
+  hideOtaProgressUI();
+  if (!otaInstallOverlay) return;
+  if (otaSuccessCountdownTimer) {
+    clearInterval(otaSuccessCountdownTimer);
+    otaSuccessCountdownTimer = null;
+  }
+  if (otaInstallViewInstalling) otaInstallViewInstalling.classList.remove('hidden');
+  if (otaInstallViewSuccess) otaInstallViewSuccess.classList.add('hidden');
+  otaInstallOverlay.classList.remove('hidden');
+  updateOtaInstallOverlay(percent, phaseText);
+}
+
+function updateOtaInstallOverlay(percent, phaseText) {
+  if (!otaInstallOverlay) return;
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  if (otaInstallRing) {
+    otaInstallRing.style.setProperty('--ota-progress-angle', `${safePercent * 3.6}deg`);
+  }
+  if (otaInstallPercent) otaInstallPercent.textContent = `${Math.round(safePercent)}%`;
+  if (otaInstallPhase && phaseText) otaInstallPhase.textContent = phaseText;
+}
+
+function hideOtaInstallOverlay() {
+  if (!otaInstallOverlay) return;
+  if (otaSuccessCountdownTimer) {
+    clearInterval(otaSuccessCountdownTimer);
+    otaSuccessCountdownTimer = null;
+  }
+  otaInstallOverlay.classList.add('hidden');
+}
+
+function showOtaInstallSuccessCountdown(seconds = 3) {
+  if (!otaInstallOverlay) return;
+  if (otaInstallViewInstalling) otaInstallViewInstalling.classList.add('hidden');
+  if (otaInstallViewSuccess) otaInstallViewSuccess.classList.remove('hidden');
+  otaInstallOverlay.classList.remove('hidden');
+
+  let remaining = seconds;
+  if (otaInstallSuccessCountdown) {
+    otaInstallSuccessCountdown.textContent = `REBOOTING IN ${remaining}s`;
+  }
+
+  if (otaSuccessCountdownTimer) {
+    clearInterval(otaSuccessCountdownTimer);
+  }
+
+  otaSuccessCountdownTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(otaSuccessCountdownTimer);
+      otaSuccessCountdownTimer = null;
+      if (otaInstallSuccessCountdown) {
+        otaInstallSuccessCountdown.textContent = 'REBOOTING...';
+      }
+      return;
+    }
+    if (otaInstallSuccessCountdown) {
+      otaInstallSuccessCountdown.textContent = `REBOOTING IN ${remaining}s`;
+    }
+  }, 1000);
+}
+
+function clampInt(value, min, max) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return min;
+  return Math.min(max, Math.max(min, Math.round(num)));
+}
+
+let activeSoftLimitErrorKey = '';
+
+function normalizeSoftLimitInputs() {
+  const azMinEl = document.getElementById('limit-az-min');
+  const azMaxEl = document.getElementById('limit-az-max');
+  const altMinEl = document.getElementById('limit-alt-min');
+  const altMaxEl = document.getElementById('limit-alt-max');
+
+  if (!azMinEl || !azMaxEl || !altMinEl || !altMaxEl) {
+    return null;
+  }
+
+  const limits = {
+    az_min: clampInt(azMinEl.value, -9, 9),
+    az_max: clampInt(azMaxEl.value, -9, 9),
+    alt_min: clampInt(altMinEl.value, -14, 14),
+    alt_max: clampInt(altMaxEl.value, -14, 14)
+  };
+
+  azMinEl.value = String(limits.az_min);
+  azMaxEl.value = String(limits.az_max);
+  altMinEl.value = String(limits.alt_min);
+  altMaxEl.value = String(limits.alt_max);
+
+  return limits;
+}
+
+function validateSoftLimitsRelation(showModalOnError = false) {
+  const limits = normalizeSoftLimitInputs();
+  if (!limits) return true;
+
+  let errorKey = '';
+  let errorMsg = '';
+
+  if (limits.az_min >= limits.az_max) {
+    errorKey = 'az';
+    errorMsg = 'AZ Min must be smaller than AZ Max.';
+  }
+  else if (limits.alt_min >= limits.alt_max) {
+    errorKey = 'alt';
+    errorMsg = 'ALT Min must be smaller than ALT Max.';
+  }
+
+  if (!errorKey) {
+    activeSoftLimitErrorKey = '';
+    return true;
+  }
+
+  if (showModalOnError && activeSoftLimitErrorKey !== errorKey) {
+    showModal('Invalid Soft Limit', errorMsg, [{ text: 'OK', class: 'btn-warning' }]);
+  }
+  activeSoftLimitErrorKey = errorKey;
+  return false;
+}
+
+function validateSoftLimitsBeforeSave() {
+  if (!validateSoftLimitsRelation(true)) {
+    return false;
+  }
+  return true;
+}
+
+function bindSoftLimitInputGuards() {
+  const ids = ['limit-az-min', 'limit-az-max', 'limit-alt-min', 'limit-alt-max'];
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const onUserEdit = () => {
+      validateSoftLimitsRelation(true);
+    };
+    el.addEventListener('input', onUserEdit);
+    el.addEventListener('change', onUserEdit);
+    el.addEventListener('blur', onUserEdit);
+  });
+}
+
+function hasBackendConnection() {
+  return Boolean(ws && ws.readyState === WebSocket.OPEN && backendWsConnected);
+}
+
+function markBackendDisconnected() {
+  backendWsConnected = false;
+  backendWsChecked = true;
+}
+
+function waitForBackendStatus(timeoutMs = 1200) {
+  if (backendWsChecked) {
+    return Promise.resolve(hasBackendConnection());
+  }
+
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (backendWsChecked || (Date.now() - startedAt) >= timeoutMs) {
+        clearInterval(timer);
+        resolve(hasBackendConnection());
+      }
+    }, 100);
+  });
 }
 
 function connectWebSocket() {
@@ -81,6 +343,9 @@ function connectWebSocket() {
   
   ws.onopen = () => {
     console.log('WebSocket connected');
+    backendWsConnected = true;
+    backendWsChecked = true;
+    isRebooting = false; // reset trạng thái chờ reboot khi kết nối mới
     // Trạng thái sẽ được cập nhật khi nhận gói tin đầu tiên chứa RSSI
     if (reconnectInterval) clearInterval(reconnectInterval);
   };
@@ -88,6 +353,24 @@ function connectWebSocket() {
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+
+      // --- CONNECTION CONTROL: Xử lý thông báo từ chối kết nối từ Server ---
+      if (data.cmd === 'connectionRejected') {
+        console.warn('WebSocket connection rejected:', data.reason);
+        showConnectionLockedOverlay(data.reason || 'System is busy.');
+        // Đóng WebSocket và KHÔNG auto-reconnect
+        if (ws) {
+          ws.onclose = null; // Ngăn onclose gọi reconnect
+          ws.close();
+          ws = null;
+        }
+        if (reconnectInterval) {
+          clearInterval(reconnectInterval);
+          reconnectInterval = null;
+        }
+        return;
+      }
+
       updateUI(data);
     } catch (e) {
       console.error('JSON parse error:', e);
@@ -96,13 +379,15 @@ function connectWebSocket() {
   
   ws.onerror = (error) => {
     console.error('WebSocket error:', error);
+    markBackendDisconnected();
     updateWifiIcon(-1000); // Hiển thị mất kết nối
   };
   
   ws.onclose = () => {
     console.log('WebSocket closed');
+    markBackendDisconnected();
     updateWifiIcon(-1000); // Hiển thị mất kết nối
-    // Attempt reconnect every 3 seconds
+    // Attempt reconnect every 3 seconds (trừ khi đã bị từ chối)
     if (!reconnectInterval) {
       reconnectInterval = setInterval(connectWebSocket, 3000);
     }
@@ -130,8 +415,15 @@ function updateUI(data) {
   if(data.status){
     console.log('WebSocket status:', data.status);
     if(data.status === 'configSaved'){
-      showMessage('Settings saved on device', '#save-message', 3000);
+      showMessage('✓ Settings saved to flash.', '#save-message', 3000);
+    } else if(data.status === 'configApplied'){
+      showMessage('⚡ Settings applied (not saved). Reboot to discard.', '#save-message', 4000);
     }
+  }
+
+  // Config nhận từ serial (broadcastConfig) - tương đương nhấn Apply
+  if (data.config_pushed && data.motor) {
+    showMessage('⚡ Config received from device. Applied.', '#save-message', 4000);
   }
   
   // Xử lý phản hồi đăng nhập Admin
@@ -155,6 +447,19 @@ function updateUI(data) {
         passInput.value = '';
         passInput.focus();
       }
+    }
+  }
+
+  // Xử lý phản hồi đổi mật khẩu Admin
+  if (data.cmd === 'changePassword') {
+    if (data.result) {
+      showMessage('✓ Password changed successfully!', '#change-pass-msg', 4000);
+      const oldEl = document.getElementById('admin-old-pass');
+      const newEl = document.getElementById('admin-new-pass');
+      if (oldEl) oldEl.value = '';
+      if (newEl) newEl.value = '';
+    } else {
+      showMessage('⚠ Failed: incorrect current password or invalid new password.', '#change-pass-msg', 4000);
     }
   }
 
@@ -363,22 +668,27 @@ function updateUI(data) {
   }
   
   if (data.sys_status !== undefined) {
-    const el = document.getElementById('system-status');
-    if (el) {
-      el.textContent = data.sys_status;
-      el.classList.add('font-bold');
-      
-      // Cập nhật màu sắc trạng thái
-      el.classList.remove('status-text-success', 'status-text-danger', 'status-text-warning');
-      let colorClass = 'status-text-success';
-      if (data.sys_status === 'ERROR') colorClass = 'status-text-danger';
-      else if (data.sys_status === 'REBOOTING') colorClass = 'status-text-success';
-      else if (data.sys_status !== 'READY') colorClass = 'status-text-warning';
-      el.classList.add(colorClass);
+    if (data.sys_status === 'REBOOTING') isRebooting = true;
+    if (isRebooting && data.sys_status !== 'REBOOTING') {
+      // Đang chờ reboot: giữ nguyên trạng thái REBOOTING, không để bị ghi đè
+    } else {
+      const el = document.getElementById('system-status');
+      if (el) {
+        el.textContent = data.sys_status;
+        el.classList.add('font-bold');
+        
+        // Cập nhật màu sắc trạng thái
+        el.classList.remove('status-text-success', 'status-text-danger', 'status-text-warning');
+        let colorClass = 'status-text-success';
+        if (data.sys_status === 'ERROR') colorClass = 'status-text-danger';
+        else if (data.sys_status === 'REBOOTING') colorClass = 'status-text-success';
+        else if (data.sys_status !== 'READY') colorClass = 'status-text-warning';
+        el.classList.add(colorClass);
 
-      // Khóa/Mở khóa các nút điều khiển dựa trên trạng thái lỗi
-      hasSystemError = (data.sys_status === 'ERROR');
-      setSystemLocked(hasSystemError || isSystemCalibrating);
+        // Khóa/Mở khóa các nút điều khiển dựa trên trạng thái lỗi
+        hasSystemError = (data.sys_status === 'ERROR');
+        setSystemLocked(hasSystemError || isSystemCalibrating);
+      }
     }
   }
 
@@ -390,10 +700,10 @@ function updateUI(data) {
   
   // Cập nhật thông tin phiên bản từ Server
   if (data.fw_ver !== undefined) {
-    // Lưu "1.0.7" để so sánh nhưng hiển thị đầy đủ "firmware 1.0.7"
+    // Lưu version để so sánh nhưng chỉ hiển thị một dòng Firmware x.x.x trên header.
     currentFwVer = extractVersion(data.fw_ver);
     const el = document.getElementById('display-fw-ver');
-    if (el) el.textContent = data.fw_ver;
+    if (el) el.textContent = `Firmware ${currentFwVer}`;
   }
 
   if (data.rssi !== undefined) {
@@ -482,6 +792,11 @@ function updateUI(data) {
     if (data.limits.az_max !== undefined) document.getElementById('limit-az-max').value = data.limits.az_max;
     if (data.limits.alt_min !== undefined) document.getElementById('limit-alt-min').value = data.limits.alt_min;
     if (data.limits.alt_max !== undefined) document.getElementById('limit-alt-max').value = data.limits.alt_max;
+    if (data.limits.enable_softlimit !== undefined) {
+      const cb = document.getElementById('enable-softlimit');
+      if (cb) cb.checked = data.limits.enable_softlimit;
+    }
+    normalizeSoftLimitInputs();
   }
   // Cập nhật Motor settings
   if (data.motor !== undefined) {
@@ -550,8 +865,74 @@ function updateUI(data) {
         toggleMonitorPanel(data.motor.show_hardlimit_monitor);
       }
     }
+    if (data.motor.swap_az_alt !== undefined) {
+      const sa = document.getElementById('swap-az-alt');
+      if (sa) sa.checked = data.motor.swap_az_alt;
+    }
+    if (data.serial !== undefined) {
+      const sMap = { baud: 'serial-baud', databits: 'serial-databits', stopbits: 'serial-stopbits', parity: 'serial-parity' };
+      for (const k in sMap) {
+        if (data.serial[k] !== undefined) {
+          const el = document.getElementById(sMap[k]);
+          if (el) el.value = String(data.serial[k]);
+        }
+      }
+      if (data.serial.watchdog !== undefined) {
+        const cw = document.getElementById('enable-comm-watchdog');
+        if (cw) cw.checked = data.serial.watchdog;
+      }
+      if (data.serial.log !== undefined) {
+        const sl = document.getElementById('toggle-serial-log-btn');
+        if (sl) {
+          sl.checked = data.serial.log;
+          const panel = document.getElementById('serial-log-panel');
+          if (panel) panel.style.display = data.serial.log ? 'block' : 'none';
+        }
+      }
+    }
     isUpdatingFromWS = false;
   }
+
+  // Cập nhật Backlash settings
+  if (data.backlash !== undefined) {
+    if (data.backlash.enable !== undefined) {
+      const cb = document.getElementById('enable-backlash');
+      if (cb) cb.checked = data.backlash.enable;
+    }
+    if (data.backlash.az_steps !== undefined) {
+      const az = document.getElementById('backlash-az');
+      if (az) az.value = data.backlash.az_steps;
+    }
+    if (data.backlash.alt_steps !== undefined) {
+      const alt = document.getElementById('backlash-alt');
+      if (alt) alt.value = data.backlash.alt_steps;
+    }
+    if (data.backlash.overshoot !== undefined) {
+      const os = document.getElementById('enable-overshoot');
+      if (os) os.checked = data.backlash.overshoot;
+    }
+    if (data.backlash.overshoot_d !== undefined) {
+      const d = document.getElementById('overshoot-deg');
+      if (d) d.value = data.backlash.overshoot_d;
+    }
+    if (data.backlash.overshoot_m !== undefined) {
+      const m = document.getElementById('overshoot-min');
+      if (m) m.value = data.backlash.overshoot_m;
+    }
+    if (data.backlash.overshoot_s !== undefined) {
+      const s = document.getElementById('overshoot-sec');
+      if (s) s.value = data.backlash.overshoot_s;
+    }
+    if (data.backlash.overshoot_up !== undefined) {
+      const up = document.getElementById('overshoot-up');
+      if (up) up.checked = data.backlash.overshoot_up;
+    }
+    if (data.backlash.overshoot_down !== undefined) {
+      const dn = document.getElementById('overshoot-down');
+      if (dn) dn.checked = data.backlash.overshoot_down;
+    }
+  }
+
   // Cập nhật Alignment Params
   if (data.align !== undefined) {
     if (data.align.az !== undefined) {
@@ -589,29 +970,59 @@ function updateUI(data) {
   // Xử lý tiến độ OTA
   if (data.ota_progress !== undefined) {
     const percent = data.ota_progress;
-    const bar = document.getElementById('ota-progress-bar');
-    const text = document.getElementById('ota-percent');
-    if (bar) bar.style.width = percent + '%';
-    if (text) text.textContent = percent + '%';
+    if (otaMode === 'ota') {
+      const currentStep = otaPlan?.steps?.[otaCurrentStepIndex];
+      const stepLabel = currentStep ? `Installing ${currentStep.type} (${otaCurrentStepIndex + 1}/${otaPlan.steps.length})...` : 'Installing update...';
+      updateOtaInstallOverlay(percent, stepLabel);
+    }
+  }
 
-    if (percent === 100) {
-      const label = document.getElementById('ota-status-label');
-      if (label) label.textContent = "Update Successful! Rebooting...";
+  if (data.ota_done) {
+    const doneType = data.ota_type || 'update';
+
+    if (data.reboot_after) {
+      if (otaMode === 'ota') {
+        showOtaInstallSuccessCountdown(3);
+      }
       setTimeout(() => {
         window.location.reload();
-      }, 5000); // Đợi 5 giây để ESP32 khởi động lại và Web Server sẵn sàng
+      }, 3000);
+    } else {
+      if (otaMode === 'ota') {
+        updateOtaInstallOverlay(100, `Completed ${doneType}. Starting next package...`);
+      }
+      setTimeout(() => {
+        startNextPlannedOtaStep();
+      }, 600);
     }
   }
 
   // Xử lý khi OTA thất bại
   if (data.ota_status === "FAILED") {
-    const container = document.getElementById('ota-progress-container');
-    if (container) container.classList.add('hidden');
+    hideOtaProgressUI();
+    if (otaMode === 'ota') {
+      updateOtaInstallOverlay(0, 'Installing failed. Please retry.');
+      setTimeout(() => {
+        hideOtaInstallOverlay();
+      }, 1500);
+    }
+    otaPlan = null;
+    otaCurrentStepIndex = -1;
   }
 
   // Xử lý log từ server
   if (data.log !== undefined) {
     appendLog(data.log);
+  }
+
+  // Xử lý trạng thái khóa (PC Serial đang điều khiển)
+  if (data.serial_locked !== undefined) {
+    applySystemLock(!!data.serial_locked);
+  }
+
+  // Xử lý log Serial TX/RX
+  if (data.serial_log !== undefined) {
+    appendSerialLog(data.serial_log.dir, data.serial_log.msg);
   }
 
   // Cập nhật danh sách client
@@ -733,6 +1144,7 @@ document.querySelectorAll('.speed-btn').forEach(btn => {
 function collectConfig() {
   return {
     limits: {
+      enable_softlimit: document.getElementById('enable-softlimit') ? document.getElementById('enable-softlimit').checked : true,
       az_min: parseFloat(document.getElementById('limit-az-min').value),
       az_max: parseFloat(document.getElementById('limit-az-max').value),
       alt_min: parseFloat(document.getElementById('limit-alt-min').value),
@@ -768,12 +1180,27 @@ function collectConfig() {
       stall_time: parseInt(document.getElementById('stall-time').value),
       escape_rotations: parseInt(document.getElementById('escape-rotations').value),
       enable_hardlimit: document.getElementById('enable-hardlimit').checked,
-      show_hardlimit_monitor: document.getElementById('show-hardlimit-monitor').checked
+      show_hardlimit_monitor: document.getElementById('show-hardlimit-monitor').checked,
+      swap_az_alt: document.getElementById('swap-az-alt') ? document.getElementById('swap-az-alt').checked : false
+    },
+    serial: {
+      baud: parseInt(document.getElementById('serial-baud').value) || 115200,
+      databits: parseInt(document.getElementById('serial-databits').value) || 8,
+      stopbits: parseFloat(document.getElementById('serial-stopbits').value) || 1,
+      parity: parseInt(document.getElementById('serial-parity').value) || 0,
+      watchdog: document.getElementById('enable-comm-watchdog') ? document.getElementById('enable-comm-watchdog').checked : true,
+      log: document.getElementById('toggle-serial-log-btn') ? document.getElementById('toggle-serial-log-btn').checked : false
     },
     backlash: {
       enable: document.getElementById('enable-backlash').checked,
       az_steps: parseInt(document.getElementById('backlash-az').value),
-      alt_steps: parseInt(document.getElementById('backlash-alt').value)
+      alt_steps: parseInt(document.getElementById('backlash-alt').value),
+      overshoot: document.getElementById('enable-overshoot').checked,
+      overshoot_d: clampInt(document.getElementById('overshoot-deg').value, 0, 10),
+      overshoot_m: clampInt(document.getElementById('overshoot-min').value, 0, 59),
+      overshoot_s: clampInt(document.getElementById('overshoot-sec').value, 0, 59),
+      overshoot_up: document.getElementById('overshoot-up').checked,
+      overshoot_down: document.getElementById('overshoot-down').checked
     },
     relative: {
       mode: document.getElementById('move-mode-toggle').checked,
@@ -794,9 +1221,33 @@ function collectConfig() {
   };
 }
 
+// ===== CONFIG APPLY (no reboot, no FRAM save) =====
+function applyConfigOnly() {
+  if (!validateSoftLimitsBeforeSave()) return;
+  const config = collectConfig();
+  sendCommand('applyConfig', config);
+  toggleStepsDisplay(config.motor.show_steps);
+  toggleMonitorPanel(config.motor.show_hardlimit_monitor);
+  showMessage('⚡ Settings applied (not saved). Reboot to discard.', '#save-message', 4000);
+}
+
+const applyBtn = document.getElementById('apply-btn');
+if (applyBtn) applyBtn.addEventListener('click', applyConfigOnly);
+
+const rebootBtn = document.getElementById('reboot-btn');
+if (rebootBtn) rebootBtn.addEventListener('click', () => {
+  showModal('Reboot Device', 'Reboot ESP32 now? Any unapplied or unsaved changes will be discarded.', [
+    { text: 'Reboot', class: 'btn-danger', callback: () => { sendCommand('reboot', {}); } },
+    { text: 'Cancel', class: 'btn-secondary' }
+  ]);
+});
+
 // ===== CONFIG SAVE =====
 const saveAllBtn = document.getElementById('save-all-btn');
 if(saveAllBtn) saveAllBtn.addEventListener('click', () => {
+  if (!validateSoftLimitsBeforeSave()) {
+    return;
+  }
   const config = collectConfig();
   
   sendCommand('saveConfig', config);
@@ -804,7 +1255,7 @@ if(saveAllBtn) saveAllBtn.addEventListener('click', () => {
   toggleStepsDisplay(config.motor.show_steps); // Cập nhật hiển thị ngay lập tức
   toggleMonitorPanel(config.motor.show_hardlimit_monitor);
   
-  let countdown = 3;
+  let countdown = 5;
   const msgEl = document.querySelector('#save-message');
   if(msgEl) {
     msgEl.style.display = 'block';
@@ -821,6 +1272,8 @@ if(saveAllBtn) saveAllBtn.addEventListener('click', () => {
     }, 1000);
   }
 });
+
+bindSoftLimitInputGuards();
 
 // ===== CALIBRATION CHECK HELPER =====
 function performCalibrationCheck(callback) {
@@ -840,7 +1293,7 @@ function performCalibrationCheck(callback) {
             setRebootingStatus();
             
             // Hiển thị đếm ngược Reboot giống nút Save All
-            let countdown = 3;
+            let countdown = 5;
             const msgEl = document.querySelector('#save-message');
             if(msgEl) {
               msgEl.style.display = 'block';
@@ -1186,8 +1639,65 @@ if (adminBtn) {
   });
 }
 
+const factoryZeroBtn = document.getElementById('factory-zero-btn');
+if (factoryZeroBtn) {
+  factoryZeroBtn.addEventListener('click', () => {
+    showModal(
+      'Confirm Factory Zero',
+      'Set current position as <strong>Factory Zero</strong>?<br>This also applies <strong>SET HOME HERE</strong> at the same time.',
+      [
+        {
+          text: 'Set Factory Zero',
+          class: 'btn-danger',
+          callback: () => {
+            sendCommand('setFactoryZero', {});
+            showMessage('Factory Zero set. Home updated.', '#save-message', 3000);
+          }
+        },
+        { text: 'Cancel', class: 'btn-secondary' }
+      ]
+    );
+  });
+}
+
 // ===== STOP CALIB BUTTON =====
 const stopCalibBtn = document.getElementById('stop-calib-btn');
+
+// ===== FACTORY RESET BUTTON =====
+const factoryResetBtn = document.getElementById('factory-reset-btn');
+if (factoryResetBtn) {
+  factoryResetBtn.addEventListener('click', () => {
+    showModal(
+      '⚠️ Factory Reset',
+      '<strong style="color:var(--danger);">WARNING:</strong> This will erase ALL settings (WiFi, motor config, limits, tuning, password) and reboot the device.<br><br>The device will restore factory defaults on next boot. This cannot be undone.<br><br>Are you sure?',
+      [
+        {
+          text: 'Yes, Factory Reset',
+          class: 'btn-danger',
+          callback: () => {
+            sendCommand('factoryReset', {});
+            showMessage('Factory reset initiated. Device is rebooting...', '#save-message', 8000);
+          }
+        },
+        { text: 'Cancel', class: 'btn-secondary' }
+      ]
+    );
+  });
+}
+
+// ===== CHANGE PASSWORD BUTTON =====
+const changePassBtn = document.getElementById('change-pass-btn');
+if (changePassBtn) {
+  changePassBtn.addEventListener('click', () => {
+    const oldPass = (document.getElementById('admin-old-pass') || {}).value || '';
+    const newPass = (document.getElementById('admin-new-pass') || {}).value || '';
+    if (!newPass || newPass.length >= 64) {
+      showMessage('⚠ New password must be 1–63 characters.', '#change-pass-msg', 3000);
+      return;
+    }
+    sendCommand('changePassword', { old_pass: oldPass, new_pass: newPass });
+  });
+}
 if(stopCalibBtn) stopCalibBtn.addEventListener('click', () => { sendCommand('stop', {}); });
 
 // ===== CALIBRATION BUTTONS =====
@@ -1284,6 +1794,7 @@ function renderWifiList(networks) {
 
 // ===== LOGGING =====
 function appendLog(message) {
+  if (message.includes("Manual stop sequence completed. Hardlimit re-enabled.")) return;
   const now = new Date();
   const time = now.toLocaleTimeString();
   const entry = document.createElement('div');
@@ -1293,7 +1804,9 @@ function appendLog(message) {
   let fullText = `[${time}] ${message}`;
   
   // Tô màu log dựa trên từ khóa
-  if (message.includes("Reset by User")) {
+  if (message.includes("[Apply]")) {
+    entry.classList.add('log-apply');
+  } else if (message.includes("Reset by User")) {
     entry.classList.add('log-reset');
   } else if (message.includes("Detecting")) {
     // Default color
@@ -1310,6 +1823,8 @@ function appendLog(message) {
   fullText = fullText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); // Escape HTML cơ bản
   if (fullText.includes("(Backlash applied)")) {
     fullText = fullText.replace(/\(Backlash applied\)/g, '<span class="log-backlash">(Backlash applied)</span>');
+  } else if (fullText.includes("Backlash applied")) {
+    fullText = fullText.replace(/Backlash applied/g, '<span class="log-backlash">(Backlash applied)</span>');
   }
   
   entry.innerHTML = fullText;
@@ -1330,6 +1845,22 @@ function appendLog(message) {
   }
 }
 
+// ===== SERIAL LOG =====
+function appendSerialLog(dir, message) {
+  const now = new Date();
+  const time = now.toLocaleTimeString();
+  const entry = document.createElement('div');
+  entry.className = 'history-entry';
+  entry.classList.add(dir === 'RX' ? 'serial-log-rx' : 'serial-log-tx');
+  const safe = String(message).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  entry.textContent = `[${time}] ${dir === 'RX' ? '⬇ RX' : '⬆ TX'} ${safe}`;
+  const container = document.getElementById('serial-log');
+  if (!container) return;
+  if (container.querySelector('.history-empty')) container.innerHTML = '';
+  container.insertBefore(entry, container.firstChild);
+  while (container.children.length > 200) container.removeChild(container.lastChild);
+}
+
 const resetErrorBtn = document.getElementById('reset-error-btn');
 if(resetErrorBtn) resetErrorBtn.addEventListener('click', () => {
   sendCommand('resetError', {});
@@ -1340,6 +1871,36 @@ if(clearLogBtn) clearLogBtn.addEventListener('click', () => {
   const logContainer = document.getElementById('system-log');
   if(logContainer) logContainer.innerHTML = '<div class="history-empty">Waiting for logs...</div>';
 });
+
+const toggleSerialLogBtn = document.getElementById('toggle-serial-log-btn');
+if (toggleSerialLogBtn) toggleSerialLogBtn.addEventListener('change', () => {
+  const panel = document.getElementById('serial-log-panel');
+  const isChecked = toggleSerialLogBtn.checked;
+  if (panel) panel.style.display = isChecked ? 'block' : 'none';
+  // Gửi xuống backend để bật/tắt việc gửi gói tin Serial log qua WebSocket + lưu FRAM
+  sendCommand('setSerialLog', { enabled: isChecked });
+});
+
+const clearSerialLogBtn = document.getElementById('clear-serial-log-btn');
+if (clearSerialLogBtn) clearSerialLogBtn.addEventListener('click', () => {
+  const container = document.getElementById('serial-log');
+  if (container) container.innerHTML = '<div class="history-empty">Waiting for serial data...</div>';
+});
+
+// Lọc hiển thị RX/TX
+function applySerialLogFilters() {
+  const container = document.getElementById('serial-log');
+  if (!container) return;
+  const showRx = document.getElementById('show-serial-rx');
+  const showTx = document.getElementById('show-serial-tx');
+  container.classList.toggle('hide-rx', showRx ? !showRx.checked : false);
+  container.classList.toggle('hide-tx', showTx ? !showTx.checked : false);
+}
+
+const showSerialRxCb = document.getElementById('show-serial-rx');
+if (showSerialRxCb) showSerialRxCb.addEventListener('change', applySerialLogFilters);
+const showSerialTxCb = document.getElementById('show-serial-tx');
+if (showSerialTxCb) showSerialTxCb.addEventListener('change', applySerialLogFilters);
 
 const clearHistoryBtn = document.getElementById('clear-history-btn');
 if(clearHistoryBtn) clearHistoryBtn.addEventListener('click', () => {
@@ -1393,6 +1954,10 @@ if(exportLogBtn) exportLogBtn.addEventListener('click', () => {
 
 // ===== UTILITY FUNCTIONS =====
 function sendCommand(cmd, data) {
+  if (systemLocked && cmd !== 'scanWifi' && cmd !== 'setSerialLog' && cmd !== 'resetError') {
+    appendLog('ERROR: System is locked by PC (Serial Control is Active).');
+    return;
+  }
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     console.error('WebSocket not connected');
     return;
@@ -1404,6 +1969,18 @@ function sendCommand(cmd, data) {
   };
   
   ws.send(JSON.stringify(message));
+}
+
+// ===== SYSTEM LOCK (PC Serial đang điều khiển) =====
+function applySystemLock(locked) {
+  if (systemLocked === locked) return;
+  systemLocked = locked;
+  document.body.classList.toggle('system-locked', locked);
+  if (locked) {
+    appendLog('ERROR: System is locked by PC (Serial Control is Active).');
+  } else {
+    appendLog('System unlocked. Web control available.');
+  }
 }
 
 // Ép hàm Tuning thành biến toàn cục (Window object) để chống lỗi ReferenceError
@@ -1436,6 +2013,7 @@ function showMessage(msg, elementId, duration = 2000) {
 }
 
 function setRebootingStatus() {
+  isRebooting = true;
   const statusEl = document.getElementById('system-status');
   if (statusEl) {
     statusEl.textContent = "REBOOTING";
@@ -1589,88 +2167,857 @@ function updateStepperDisplay(id) {
 }
 
 // ===== OTA UPDATE FUNCTIONS =====
-const UPDATE_LINKS = {
-  // Sử dụng link raw trực tiếp để tránh redirect HTTPS gây tốn RAM
-  firmware: "https://raw.githubusercontent.com/MLAstroRPA/Update/main/firmware.bin",
-  spiffs: "https://raw.githubusercontent.com/MLAstroRPA/Update/main/spiffs.bin"
-};
+function parseVersionParts(version) {
+  return String(version || '0.0.0').split('.').map((part) => parseInt(part, 10) || 0);
+}
+
+function compareVersionsDesc(versionA, versionB) {
+  const a = parseVersionParts(versionA);
+  const b = parseVersionParts(versionB);
+  const maxLen = Math.max(a.length, b.length);
+  for (let i = 0; i < maxLen; i++) {
+    const diff = (b[i] || 0) - (a[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function formatUpdateReleaseDate(raw) {
+  if (!raw) return 'Unknown';
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleDateString('vi-VN');
+}
+
+function buildUpdateCatalog(files, meta) {
+  const groups = new Map();
+  const extras = { bootloader: null, partitions: null };
+
+  files.forEach((file) => {
+    const name = String(file.name || '');
+    const lower = name.toLowerCase();
+    if (!lower.endsWith('.bin')) return;
+
+    if (lower.includes('bootloader')) {
+      extras.bootloader = file;
+      return;
+    }
+    if (lower.includes('partition')) {
+      extras.partitions = file;
+      return;
+    }
+
+    const kind = lower.includes('spiffs') ? 'spiffs' : (lower.includes('firmware') ? 'firmware' : '');
+    if (!kind) return;
+
+    const version = extractVersion(name);
+    if (version === 'unknown') return;
+
+    const entry = meta[name] || {};
+    if (!groups.has(version)) {
+      groups.set(version, {
+        version,
+        firmware: null,
+        spiffs: null,
+        releaseDateUtc: entry.release_date_utc || '',
+        description: entry.description || '',
+      });
+    }
+
+    const group = groups.get(version);
+    group[kind] = {
+      kind,
+      name,
+      url: file.download_url,
+      size: file.size,
+      description: entry.description || '',
+      releaseDateUtc: entry.release_date_utc || '',
+    };
+
+    if (!group.description && entry.description) group.description = entry.description;
+    if (!group.releaseDateUtc && entry.release_date_utc) group.releaseDateUtc = entry.release_date_utc;
+  });
+
+  const versions = Array.from(groups.values()).sort((a, b) => compareVersionsDesc(a.version, b.version));
+  return { versions, extras };
+}
+
+function buildVersionOptionMarkup(group, checked) {
+  const types = [];
+  if (group.firmware) types.push('<span style="color:var(--primary); font-weight:bold;">Firmware</span>');
+  if (group.spiffs) types.push('<span style="color:var(--success); font-weight:bold;">SPIFFS</span>');
+  const desc = group.description || 'No description';
+  const releaseDate = formatUpdateReleaseDate(group.releaseDateUtc);
+  const sizeParts = [];
+  if (group.firmware) sizeParts.push(`FW ${(group.firmware.size / 1024).toFixed(0)} KB`);
+  if (group.spiffs) sizeParts.push(`SPIFFS ${(group.spiffs.size / 1024).toFixed(0)} KB`);
+
+  return `
+    <label class="checkbox-label" style="display:flex; align-items:flex-start; padding:12px; border-bottom:1px solid var(--border); cursor:pointer; width:100%;">
+      <input type="radio" name="update-version" value="${group.version}" ${checked ? 'checked' : ''}>
+      <div style="margin-left:10px; flex:1;">
+        <div style="font-weight:bold;">Version ${group.version}</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Package: ${types.join(' + ')}</div>
+        <div style="font-size:11px; color:var(--text-muted);">Release: ${releaseDate}${sizeParts.length ? ' | ' + sizeParts.join(' | ') : ''}</div>
+        <div style="font-size:11px; color:var(--text-muted);">${desc}</div>
+      </div>
+    </label>`;
+}
+
+function buildUpdateModalMarkup(catalog, options = {}) {
+  const forceUsb = Boolean(options.forceUsb);
+  const optionsHtml = catalog.versions.map((group, index) => buildVersionOptionMarkup(group, index === 0)).join('');
+  const hasExtras = Boolean(catalog.extras.bootloader || catalog.extras.partitions);
+
+  return `
+    ${forceUsb ? `
+      <div style="margin-bottom:12px; padding:10px; border:1px solid var(--warning); border-radius:6px; background: rgba(243, 156, 18, 0.08); color:var(--warning); font-size:12px;">
+        Backend is not connected. USB Serial update has been selected automatically. OTA is unavailable right now.
+      </div>
+    ` : ''}
+    <div id="online-version-list" style="max-height: 280px; overflow-y: auto; border:1px solid var(--border); border-radius:6px;">${optionsHtml}</div>
+    <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border); display:grid; gap:10px;">
+      <label class="checkbox-label" style="display:flex; align-items:center; gap:10px; width:100%;">
+        <input type="checkbox" id="update-via-usb" ${forceUsb ? 'checked' : ''}>
+        <span>Update via COM port (ESP Web Tools)</span>
+      </label>
+      <div id="usb-upload-options" class="${forceUsb ? '' : 'hidden'}" style="display:${forceUsb ? 'grid' : 'none'}; gap:10px; padding-left:24px; border-left:2px solid var(--border);">
+        <div id="usb-upload-extra-options" style="display:grid; gap:8px; ${hasExtras ? '' : 'display:none;'}">
+          ${catalog.extras.bootloader ? '<label class="checkbox-label" style="display:flex; align-items:center; gap:10px;"><input type="checkbox" id="include-bootloader"><span>Upload bootloader</span></label>' : ''}
+          ${catalog.extras.partitions ? '<label class="checkbox-label" style="display:flex; align-items:center; gap:10px;"><input type="checkbox" id="include-partitions"><span>Upload partitions</span></label>' : ''}
+        </div>
+        <label class="checkbox-label" style="display:flex; align-items:center; gap:10px; width:100%;">
+          <input type="checkbox" id="update-local-offline">
+          <span>Local update (use offline .bin files)</span>
+        </label>
+        <div id="local-update-options" class="hidden" style="display:none; gap:10px; border:1px dashed var(--border); border-radius:6px; padding:10px;">
+          <input type="file" id="local-update-files" multiple accept=".bin" style="display:none;">
+          <button type="button" class="btn btn-secondary btn-small" id="pick-local-update-files">Select local .bin files</button>
+          <div style="font-size:11px; color:var(--text-muted);">Detected by filename keywords only: firmware, bootloader, partition/partitions, spiffs.</div>
+          <div id="local-update-file-list" style="display:grid; gap:8px;"></div>
+        </div>
+        <div style="font-size:11px; color:var(--text-muted);">ESP Web Tools uses Web Serial &mdash; COM port is selected via browser native dialog when clicking <b>INSTALL</b>. Requires Chrome/Edge and a secure context (HTTPS or localhost).</div>
+        <div id="usb-context-warning" style="display:none; border:1px solid var(--danger); border-radius:6px; padding:10px; background: rgba(231, 76, 60, 0.08);">
+          <div style="font-size:12px; color:var(--danger); margin-bottom:8px;">
+            This page is running in an insecure context (likely ESP HTTP IP). Web Serial is blocked here.
+          </div>
+          <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">
+            Open the Beta UI page to continue the USB Serial update flow:
+            <div id="beta-ui-target-url" style="margin-top:4px; word-break:break-all;"></div>
+          </div>
+          <button type="button" class="btn btn-secondary btn-small" id="open-beta-ui-page">Open Beta UI</button>
+        </div>
+        <div id="update-modal-usb-host" class="hidden"></div>
+      </div>
+      <div id="update-modal-error" style="display:none; color:var(--danger); font-size:12px;"></div>
+    </div>`;
+}
+
+function showUpdateModalError(message) {
+  const errorEl = document.getElementById('update-modal-error');
+  if (!errorEl) return;
+  errorEl.textContent = message;
+  errorEl.style.display = 'block';
+}
+
+function clearUpdateModalError() {
+  const errorEl = document.getElementById('update-modal-error');
+  if (!errorEl) return;
+  errorEl.textContent = '';
+  errorEl.style.display = 'none';
+}
+
+function detectFlashKindFromName(filename) {
+  const lower = String(filename || '').toLowerCase();
+  if (lower.includes('bootloader')) return 'bootloader';
+  if (lower.includes('partition')) return 'partitions';
+  if (lower.includes('firmware')) return 'firmware';
+  if (lower.includes('spiffs')) return 'spiffs';
+  return '';
+}
+
+function collectLocalUpdateFiles() {
+  const input = document.getElementById('local-update-files');
+  const selected = {
+    bootloader: null,
+    partitions: null,
+    firmware: null,
+    spiffs: null,
+  };
+  if (!input || !input.files) return selected;
+
+  Array.from(input.files).forEach((file) => {
+    const kind = detectFlashKindFromName(file.name);
+    if (!kind) return;
+    if (!selected[kind]) selected[kind] = file;
+  });
+  return selected;
+}
+
+function renderLocalUpdateFileList() {
+  const container = document.getElementById('local-update-file-list');
+  if (!container) return;
+
+  const filesByKind = collectLocalUpdateFiles();
+  const items = [];
+  FLASH_KIND_ORDER.forEach((kind) => {
+    const file = filesByKind[kind];
+    if (!file) return;
+    items.push(`
+      <label class="checkbox-label" style="display:flex; align-items:flex-start; gap:10px; width:100%;">
+        <input type="checkbox" id="local-file-kind-${kind}" checked>
+        <span style="font-size:12px;"><strong>${kind}</strong>: ${file.name} <span style="color:var(--text-muted);">(${(file.size / 1024).toFixed(1)} KB)</span></span>
+      </label>
+    `);
+  });
+
+  if (!items.length) {
+    container.innerHTML = '<div style="font-size:12px; color:var(--warning);">No recognized file found. Select .bin files containing names: firmware, bootloader, partition(s), spiffs.</div>';
+    return;
+  }
+
+  container.innerHTML = items.join('');
+}
+
+function getSelectedLocalParts() {
+  const filesByKind = collectLocalUpdateFiles();
+  const parts = [];
+
+  FLASH_KIND_ORDER.forEach((kind) => {
+    const file = filesByKind[kind];
+    const enabled = document.getElementById(`local-file-kind-${kind}`)?.checked;
+    if (!file || !enabled) return;
+    const fileUrl = URL.createObjectURL(file);
+    parts.push({ kind, path: fileUrl, offset: FLASH_OFFSETS[kind], _blobUrl: fileUrl });
+  });
+
+  return parts;
+}
+
+function getPublicUsbUpdateUrl() {
+  return PUBLIC_USB_UPDATE_URL;
+}
+
+function refreshUsbContextWarning() {
+  const warningEl = document.getElementById('usb-context-warning');
+  if (!warningEl) return;
+
+  const insecureContext = !window.isSecureContext;
+  warningEl.style.display = insecureContext ? 'block' : 'none';
+
+  if (!insecureContext) return;
+
+  const targetUrl = getPublicUsbUpdateUrl();
+  const urlEl = document.getElementById('beta-ui-target-url');
+  if (urlEl) urlEl.textContent = targetUrl;
+
+  const openBtn = document.getElementById('open-beta-ui-page');
+  if (openBtn) {
+    openBtn.onclick = () => {
+      window.open(targetUrl, '_blank', 'noopener');
+    };
+  }
+}
+
+function wireUpdateModalInteractions(catalog, options = {}) {
+  const forceUsb = Boolean(options.forceUsb);
+  const usbCheckbox = document.getElementById('update-via-usb');
+  const usbOptions = document.getElementById('usb-upload-options');
+  const localCheckbox = document.getElementById('update-local-offline');
+  const localOptions = document.getElementById('local-update-options');
+  const onlineList = document.getElementById('online-version-list');
+  const extrasBlock = document.getElementById('usb-upload-extra-options');
+  const pickBtn = document.getElementById('pick-local-update-files');
+  const fileInput = document.getElementById('local-update-files');
+  const primaryActionBtn = document.getElementById('update-primary-action-btn');
+  const versionInputs = Array.from(document.querySelectorAll('input[name="update-version"]'));
+  const bootloaderCheckbox = document.getElementById('include-bootloader');
+  const partitionsCheckbox = document.getElementById('include-partitions');
+  if (!usbCheckbox || !usbOptions || !localCheckbox || !localOptions || !onlineList) return;
+
+  const refreshPrimaryActionLabel = async () => {
+    if (!primaryActionBtn) return;
+    primaryActionBtn.textContent = 'START UPDATE';
+    primaryActionBtn.style.display = usbCheckbox.checked ? 'none' : '';
+    if (usbCheckbox.checked) {
+      await renderUsbDashboardInModal(catalog);
+    } else {
+      clearUsbDashboardHost(document.getElementById('update-modal-usb-host'));
+    }
+  };
+
+  if (forceUsb) {
+    usbCheckbox.checked = true;
+    usbOptions.classList.remove('hidden');
+    usbOptions.style.display = 'grid';
+    refreshUsbContextWarning();
+  }
+
+  usbCheckbox.addEventListener('change', async (e) => {
+    clearUpdateModalError();
+    if (!e.target.checked && forceUsb) {
+      e.target.checked = true;
+      showUpdateModalError('Backend is not connected. USB Serial update is required, so this option cannot be turned off right now.');
+      await refreshPrimaryActionLabel();
+      return;
+    }
+
+    if (e.target.checked) {
+      usbOptions.classList.remove('hidden');
+      usbOptions.style.display = 'grid';
+      refreshUsbContextWarning();
+      // Preload web component early to keep CONNECT flow snappy.
+      ensureEspWebToolsLoaded().catch((error) => console.warn('ESP Web Tools preload failed:', error));
+    } else {
+      usbOptions.classList.add('hidden');
+      usbOptions.style.display = 'none';
+      // Reset local sub-mode when USB is unchecked
+      if (localCheckbox && localCheckbox.checked) {
+        localCheckbox.checked = false;
+        localOptions.classList.add('hidden');
+        localOptions.style.display = 'none';
+        if (extrasBlock && extrasBlock.children.length > 0) extrasBlock.style.display = 'grid';
+      }
+      onlineList.style.display = 'block';
+    }
+    await refreshPrimaryActionLabel();
+  });
+
+  localCheckbox.addEventListener('change', (e) => {
+    clearUpdateModalError();
+    if (e.target.checked) {
+      localOptions.classList.remove('hidden');
+      localOptions.style.display = 'grid';
+      onlineList.style.display = 'none';
+      // Hide bootloader/partitions extras — local mode manages its own files
+      if (extrasBlock) extrasBlock.style.display = 'none';
+    } else {
+      localOptions.classList.add('hidden');
+      localOptions.style.display = 'none';
+      onlineList.style.display = 'block';
+      // Restore extras block if it has content
+      if (extrasBlock && extrasBlock.children.length > 0) extrasBlock.style.display = 'grid';
+    }
+    refreshPrimaryActionLabel();
+  });
+
+  if (pickBtn && fileInput) {
+    pickBtn.addEventListener('click', () => {
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', async () => {
+      renderLocalUpdateFileList();
+      await refreshPrimaryActionLabel();
+    });
+  }
+
+  versionInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      refreshPrimaryActionLabel();
+    });
+  });
+
+  if (bootloaderCheckbox) {
+    bootloaderCheckbox.addEventListener('change', () => {
+      refreshPrimaryActionLabel();
+    });
+  }
+
+  if (partitionsCheckbox) {
+    partitionsCheckbox.addEventListener('change', () => {
+      refreshPrimaryActionLabel();
+    });
+  }
+
+  refreshPrimaryActionLabel();
+}
+
+function isGroupAlreadyInstalled(group) {
+  const checks = [];
+  if (group.firmware) checks.push(group.version === currentFwVer);
+  if (group.spiffs) checks.push(group.version === currentSpiffsVer);
+  return checks.length > 0 && checks.every(Boolean);
+}
+
+function createOtaStepsFromGroup(group) {
+  const steps = [];
+  if (group.firmware) steps.push({ type: 'firmware', url: group.firmware.url, filename: group.firmware.name, rebootAfter: false });
+  if (group.spiffs) steps.push({ type: 'spiffs', url: group.spiffs.url, filename: group.spiffs.name, rebootAfter: false });
+  if (steps.length) steps[steps.length - 1].rebootAfter = true;
+  return steps;
+}
+
+function hasWebSerialSupport() {
+  return Boolean(window.isSecureContext && 'serial' in navigator);
+}
+
+async function ensureEspWebToolsLoaded() {
+  if (customElements.get('esp-web-install-button')) return;
+  if (!espWebToolsLoader) {
+    espWebToolsLoader = import(ESP_WEB_TOOLS_MODULE_URL);
+  }
+  await espWebToolsLoader;
+}
+
+function buildEspWebToolsParts(group, catalog) {
+  const parts = [];
+
+  if (document.getElementById('include-bootloader')?.checked && catalog.extras.bootloader) {
+    parts.push({ path: catalog.extras.bootloader.download_url, offset: FLASH_OFFSETS.bootloader });
+  }
+  if (document.getElementById('include-partitions')?.checked && catalog.extras.partitions) {
+    parts.push({ path: catalog.extras.partitions.download_url, offset: FLASH_OFFSETS.partitions });
+  }
+  if (group.firmware) {
+    parts.push({ path: group.firmware.url, offset: FLASH_OFFSETS.firmware });
+  }
+  if (group.spiffs) {
+    parts.push({ path: group.spiffs.url, offset: FLASH_OFFSETS.spiffs });
+  }
+
+  return parts;
+}
+
+function createEspWebToolsManifestUrl(group, catalog, localParts = null) {
+  const parts = localParts || buildEspWebToolsParts(group, catalog);
+  if (!parts.length) return null;
+
+  const manifest = {
+    name: `MLAstro RPA ${group?.version || 'local'}`,
+    version: group?.version || 'local',
+    new_install_prompt_erase: true,
+    builds: [
+      {
+        chipFamily: 'ESP32',
+        parts: parts.map((p) => ({ path: p.path, offset: p.offset })),
+      },
+    ],
+  };
+
+  const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+  return URL.createObjectURL(blob);
+}
+
+function hasSelectedUsbExtra(catalog) {
+  const bootSelected = Boolean(document.getElementById('include-bootloader')?.checked && catalog.extras.bootloader);
+  const partSelected = Boolean(document.getElementById('include-partitions')?.checked && catalog.extras.partitions);
+  return bootSelected || partSelected;
+}
+
+function releaseActiveUsbArtifacts() {
+  if (activeUsbManifestUrl) {
+    URL.revokeObjectURL(activeUsbManifestUrl);
+    activeUsbManifestUrl = null;
+  }
+  if (Array.isArray(activeUsbLocalBlobUrls)) {
+    activeUsbLocalBlobUrls.forEach((url) => {
+      if (url) URL.revokeObjectURL(url);
+    });
+  }
+  activeUsbLocalBlobUrls = [];
+}
+
+function clearUsbDashboardHost(host) {
+  if (!host) return;
+  host.innerHTML = '';
+  host.classList.add('hidden');
+  releaseActiveUsbArtifacts();
+}
+
+async function renderUsbDashboardInModal(catalog) {
+  const host = document.getElementById('update-modal-usb-host');
+  const usbCheckbox = document.getElementById('update-via-usb');
+  const localCheckbox = document.getElementById('update-local-offline');
+  if (!host || !usbCheckbox?.checked) {
+    clearUsbDashboardHost(host);
+    return;
+  }
+
+  releaseActiveUsbArtifacts();
+  host.classList.remove('hidden');
+
+  if (!hasWebSerialSupport()) {
+    host.innerHTML = '<div class="usb-flash-card"><div class="usb-flash-title">USB Flash Dashboard</div><div class="usb-flash-help">Web Serial unavailable here. Use Chrome/Edge on HTTPS or localhost.</div></div>';
+    return;
+  }
+
+  let selectedGroup = null;
+  let localParts = null;
+  let packageLabel = 'selected package';
+  const localMode = Boolean(localCheckbox?.checked);
+
+  if (localMode) {
+    localParts = getSelectedLocalParts();
+    if (!localParts.length) {
+      host.innerHTML = '<div class="usb-flash-card"><div class="usb-flash-title">USB Flash Dashboard</div><div class="usb-flash-help">Select local .bin files to enable CONNECT.</div></div>';
+      return;
+    }
+    activeUsbLocalBlobUrls = localParts.map((part) => part._blobUrl).filter(Boolean);
+    packageLabel = 'local files';
+  } else {
+    const selectedVersion = document.querySelector('input[name="update-version"]:checked')?.value;
+    selectedGroup = catalog.versions.find((group) => group.version === selectedVersion);
+    if (!selectedGroup) {
+      host.innerHTML = '<div class="usb-flash-card"><div class="usb-flash-title">USB Flash Dashboard</div><div class="usb-flash-help">Select a version to enable CONNECT.</div></div>';
+      return;
+    }
+    packageLabel = `version ${selectedGroup.version}`;
+  }
+
+  try {
+    await ensureEspWebToolsLoaded();
+  } catch (error) {
+    host.innerHTML = `<div class="usb-flash-card"><div class="usb-flash-title">USB Flash Dashboard</div><div class="usb-flash-help">Cannot load ESP Web Tools: ${error.message || error}</div></div>`;
+    return;
+  }
+
+  const manifestUrl = createEspWebToolsManifestUrl(selectedGroup, catalog, localParts);
+  if (!manifestUrl) {
+    host.innerHTML = '<div class="usb-flash-card"><div class="usb-flash-title">USB Flash Dashboard</div><div class="usb-flash-help">No package selected to upload via USB.</div></div>';
+    return;
+  }
+  activeUsbManifestUrl = manifestUrl;
+
+  host.innerHTML = `
+    <div class="usb-flash-card">
+      <div class="usb-flash-title">USB Flash Dashboard</div>
+      <div class="usb-flash-help">Selected package: <strong>${packageLabel}</strong>. Click CONNECT below to choose COM and flash.</div>
+      <esp-web-install-button id="update-modal-esp-web-install-btn" manifest="${manifestUrl}"></esp-web-install-button>
+    </div>`;
+
+  const installBtn = document.getElementById('update-modal-esp-web-install-btn');
+  if (!installBtn) return;
+
+  installBtn.addEventListener('click', () => {
+    otaMode = 'usb';
+    hideOtaProgressUI();
+    hideOtaInstallOverlay();
+    if (modal) {
+      // Keep the session alive but visually dismiss the chooser modal so it doesn't block ESP Web Tools UI.
+      setTimeout(() => {
+        modal.classList.add('modal-detached');
+      }, 0);
+    }
+  });
+
+  installBtn.addEventListener('state-changed', (event) => {
+    const detail = event.detail || {};
+    console.log('[USB Flash State]', detail.state);
+    updateUsbProgressFromState(detail);
+
+    if (detail.state === 'finished') {
+      usbFlashPhase = 'finished';
+      showMessage('USB flashing complete. Device rebooting...', '#save-message', 5000);
+      setTimeout(() => {
+        clearUsbDashboardHost(host);
+        hideModal();
+      }, 1000);
+    } else if (detail.state === 'error') {
+      showMessage(`USB flashing error: ${detail.error || 'unknown'}`, '#save-message', 5000);
+      if (modal) {
+        modal.classList.remove('modal-detached');
+      }
+    }
+  });
+}
+
+async function startUsbEspWebToolsInstall(group, catalog, localParts = null) {
+  clearUpdateModalError();
+
+  if (!hasWebSerialSupport()) {
+    showUpdateModalError('Web Serial unavailable. Open this page on HTTPS/localhost using Chrome or Edge.');
+    return;
+  }
+
+  try {
+    await ensureEspWebToolsLoaded();
+  } catch (err) {
+    showUpdateModalError(`Cannot load ESP Web Tools module: ${err.message || err}`);
+    return;
+  }
+
+  const manifestUrl = createEspWebToolsManifestUrl(group, catalog, localParts);
+  if (!manifestUrl) {
+    showUpdateModalError('No package selected to upload via USB.');
+    return;
+  }
+
+  hideModal();
+  otaPlan = null;
+  otaCurrentStepIndex = -1;
+  otaMode = 'usb';
+  usbFlashProgressHint = 0;
+  usbFlashPhase = 'erasing';
+  ensureProgressVisible(formatUsbPhaseChecklist('erasing', `ready for ${group?.version || 'local files'}...`));
+  updateProgressUI(0, formatUsbPhaseChecklist('erasing', 'waiting for CONNECT in USB dashboard...'));
+
+  const host = document.getElementById('usb-flash-host');
+  if (!host) {
+    showMessage('USB flash host not found in System Update panel.', '#save-message', 5000);
+    return;
+  }
+
+  host.classList.remove('hidden');
+  host.innerHTML = `
+    <div class="usb-flash-card">
+      <div class="usb-flash-title">USB Flash Dashboard</div>
+      <div class="usb-flash-help">Selected package: <strong>${group?.version || 'local files'}</strong>. Use the CONNECT button below to choose the COM port and start flashing.</div>
+      <esp-web-install-button id="esp-web-install-btn" manifest="${manifestUrl}"></esp-web-install-button>
+    </div>`;
+
+  await new Promise(r => setTimeout(r, 100));
+
+  const installBtn = document.getElementById('esp-web-install-btn');
+  if (!installBtn) {
+    host.classList.add('hidden');
+    host.innerHTML = '';
+    showMessage('USB flash component failed to load.', '#save-message', 5000);
+    return;
+  }
+
+  // Listen for flashing events
+  installBtn.addEventListener('state-changed', (event) => {
+    const detail = event.detail || {};
+    console.log('[USB Flash State]', detail.state);
+    updateUsbProgressFromState(detail);
+    
+    if (detail.state === 'finished') {
+      usbFlashPhase = 'finished';
+      updateProgressUI(100, formatUsbPhaseChecklist('finished', 'rebooting into application...'));
+      showMessage('USB flashing complete. Device rebooting...', '#save-message', 5000);
+      setTimeout(() => {
+        host.innerHTML = '';
+        host.classList.add('hidden');
+      }, 1000);
+    } else if (detail.state === 'error') {
+      updateProgressUI(usbFlashProgressHint || 0, `USB flash failed: ${detail.error || 'unknown error'}`);
+      showMessage(`USB flashing error: ${detail.error || 'unknown'}`, '#save-message', 5000);
+      setTimeout(() => {
+        host.innerHTML = '';
+        host.classList.add('hidden');
+      }, 3000);
+    }
+  });
+
+  installBtn.addEventListener('click', () => {
+    updateProgressUI(5, formatUsbPhaseChecklist('erasing', 'opening COM chooser...'));
+    showMessage(`Open COM chooser for ${group?.version || 'local files'} and start flashing.`, '#save-message');
+  });
+
+  // Cleanup blob URLs after timeout
+  setTimeout(() => {
+    URL.revokeObjectURL(manifestUrl);
+    if (Array.isArray(localParts)) {
+      localParts.forEach((p) => {
+        if (p._blobUrl) URL.revokeObjectURL(p._blobUrl);
+      });
+    }
+  }, 120000);
+}
+
+function ensureProgressVisible(labelText) {
+  const progressContainer = document.getElementById('ota-progress-container');
+  if (progressContainer) progressContainer.classList.remove('hidden');
+  document.getElementById('ota-status-label').textContent = labelText;
+  document.getElementById('ota-progress-bar').style.width = '0%';
+  document.getElementById('ota-percent').textContent = '0%';
+}
+
+function updateProgressUI(percent, labelText) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  const progressContainer = document.getElementById('ota-progress-container');
+  const bar = document.getElementById('ota-progress-bar');
+  const text = document.getElementById('ota-percent');
+  const label = document.getElementById('ota-status-label');
+  if (progressContainer) progressContainer.classList.remove('hidden');
+  if (bar) bar.style.width = `${safePercent}%`;
+  if (text) text.textContent = `${Math.round(safePercent)}%`;
+  if (label && labelText) label.textContent = labelText;
+}
+
+function formatUsbPhaseChecklist(phase, suffix = '') {
+  const states = {
+    erasing: '[ ] erasing',
+    writing: '[ ] writing',
+    verifying: '[ ] verifying',
+  };
+
+  if (phase === 'erasing') {
+    states.erasing = '[>] erasing';
+  } else if (phase === 'writing') {
+    states.erasing = '[x] erasing';
+    states.writing = '[>] writing';
+  } else if (phase === 'verifying') {
+    states.erasing = '[x] erasing';
+    states.writing = '[x] writing';
+    states.verifying = '[>] verifying';
+  } else if (phase === 'finished') {
+    states.erasing = '[x] erasing';
+    states.writing = '[x] writing';
+    states.verifying = '[x] verifying';
+  }
+
+  return `USB flash: ${states.erasing}  ${states.writing}  ${states.verifying}${suffix ? ` | ${suffix}` : ''}`;
+}
+
+function updateUsbProgressFromState(detail) {
+  const state = String(detail?.state || '').toLowerCase();
+  const rawProgress = detail?.progress;
+
+  const getPhaseFromStateOrProgress = (progressValue) => {
+    if (state.includes('finished')) return 'finished';
+    if (state.includes('verif')) return 'verifying';
+    if (state.includes('writ') || state.includes('flash')) return 'writing';
+    if (state.includes('eras')) return 'erasing';
+    if (Number.isFinite(progressValue)) {
+      if (progressValue >= 85) return 'verifying';
+      if (progressValue >= 30) return 'writing';
+      if (progressValue >= 8) return 'erasing';
+    }
+    return usbFlashPhase;
+  };
+
+  const getUsbStateLabel = (phase) => {
+    if (phase === 'finished') return formatUsbPhaseChecklist('finished', 'rebooting into application...');
+    if (state.includes('connecting')) return formatUsbPhaseChecklist(phase, 'resetting ESP into bootloader...');
+    if (state.includes('prepar')) return formatUsbPhaseChecklist(phase, 'preparing installer...');
+    return formatUsbPhaseChecklist(phase);
+  };
+
+  if (Number.isFinite(rawProgress)) {
+    const normalized = rawProgress <= 1 ? rawProgress * 100 : rawProgress;
+    usbFlashProgressHint = Math.max(usbFlashProgressHint, normalized);
+    usbFlashPhase = getPhaseFromStateOrProgress(usbFlashProgressHint);
+    updateProgressUI(usbFlashProgressHint, getUsbStateLabel(usbFlashPhase));
+    return;
+  }
+
+  const hints = {
+    preparing: 10,
+    connecting: 15,
+    erasing: 30,
+    writing: 55,
+    flashing: 70,
+    verifying: 85,
+    finished: 100,
+  };
+
+  let target = usbFlashProgressHint;
+  for (const [key, value] of Object.entries(hints)) {
+    if (state.includes(key)) {
+      target = Math.max(target, value);
+      break;
+    }
+  }
+
+  if (target === usbFlashProgressHint && state && state !== 'finished') {
+    target = Math.min(95, usbFlashProgressHint + 5);
+  }
+
+  usbFlashProgressHint = target;
+  usbFlashPhase = getPhaseFromStateOrProgress(target);
+  updateProgressUI(target, getUsbStateLabel(usbFlashPhase));
+}
+
+function startNextPlannedOtaStep() {
+  if (!otaPlan || otaMode !== 'ota') return;
+  otaCurrentStepIndex += 1;
+  const step = otaPlan.steps[otaCurrentStepIndex];
+  if (!step) {
+    otaPlan = null;
+    otaCurrentStepIndex = -1;
+    return;
+  }
+
+  showOtaInstallOverlay(`Installing ${step.type} (${otaCurrentStepIndex + 1}/${otaPlan.steps.length})...`, 0);
+  sendCommand('otaUpdate', { type: step.type, url: step.url, reboot_after: step.rebootAfter });
+}
 
 async function checkAllUpdates() {
-  const repoOwner = "MLAstroRPA";
-  const repoName = "Update";
+  const repoOwner = 'MLAstroRPA';
+  const repoName = 'Update';
   const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/`;
+  const metaUrl = `https://raw.githubusercontent.com/${repoOwner}/${repoName}/main/meta.json`;
 
   showModal('Checking Updates', `<div class="wifi-scanning">Connecting to GitHub...</div>`);
 
   try {
-    const response = await fetch(apiUrl);
-    if (!response.ok) throw new Error("Failed to reach GitHub");
+    const [response, metaResp, backendAvailable] = await Promise.all([fetch(apiUrl), fetch(metaUrl), waitForBackendStatus(1200)]);
+    if (!response.ok) throw new Error('Failed to reach GitHub');
+
     const files = await response.json();
+    let meta = {};
+    if (metaResp.ok) {
+      try {
+        const parsed = await metaResp.json();
+        if (parsed && typeof parsed === 'object') meta = parsed;
+      } catch (error) {
+        console.warn('meta.json parse failed, continue without description', error);
+      }
+    }
 
-    // Lọc tất cả các file .bin
-    const binFiles = files.filter(f => f.name.toLowerCase().endsWith('.bin'));
-
-    if (binFiles.length === 0) {
-      showModal('No Updates', 'No update files (.bin) found in the repository.');
+    const catalog = buildUpdateCatalog(files, meta);
+    if (!catalog.versions.length) {
+      showModal('No Updates', 'No versioned firmware/spiffs packages were found in the repository.');
       return;
     }
 
-    // Sắp xếp phiên bản mới nhất lên đầu
-    binFiles.sort((a, b) => b.name.localeCompare(a.name));
+    const forceUsb = !backendAvailable;
 
-    let html = `<p style="margin-bottom:15px;">Select a version to install:</p><div style="max-height: 300px; overflow-y: auto;">`;
-    binFiles.forEach((file, i) => {
-      const isFw = file.name.toLowerCase().includes('firmware');
-      const isSp = file.name.toLowerCase().includes('spiffs');
-      const typeTag = isFw ? '<span style="color:var(--primary)">[FW]</span>' : (isSp ? '<span style="color:var(--success)">[DATA]</span>' : '[??]');
-      
-      html += `
-        <label class="checkbox-label" style="display:flex; align-items:center; padding:12px; border-bottom:1px solid var(--border); cursor:pointer;">
-          <input type="radio" name="update-file" value="${file.download_url}" data-filename="${file.name}" ${i === 0 ? 'checked' : ''}>
-          <div style="margin-left:10px;">
-            <div style="font-weight:bold;">${typeTag} ${file.name}</div>
-            <div style="font-size:11px; color:var(--text-muted);">Size: ${(file.size / 1024).toFixed(1)} KB</div>
-          </div>
-        </label>`;
-    });
-    html += `</div>`;
+    showModal('Available Updates', buildUpdateModalMarkup(catalog, { forceUsb }), [
+      {
+        id: 'update-primary-action-btn',
+        text: 'START UPDATE',
+        class: 'btn-danger',
+        closeOnClick: false,
+        callback: async () => {
+          clearUpdateModalError();
+          const useUsb = Boolean(document.getElementById('update-via-usb')?.checked);
+          const localMode = useUsb && Boolean(document.getElementById('update-local-offline')?.checked);
 
-    showModal('Available Updates', html, [
-      { text: 'START UPDATE', class: 'btn-danger', closeOnClick: false, callback: () => {
-        const selected = document.querySelector('input[name="update-file"]:checked');
-        const url = selected.value;
-        const fname = selected.getAttribute('data-filename').toLowerCase();
-        const type = fname.includes('spiffs') ? 'spiffs' : 'firmware';
-        
-        // KIỂM TRA PHIÊN BẢN TRÙNG LẶP (SỬ DỤNG HELPER MỚI)
-        const selectedVer = extractVersion(fname);
-        
-        if (selectedVer !== "unknown") {
-            const currentVer = (type === 'firmware') ? currentFwVer : currentSpiffsVer;
-            
-            if (selectedVer === currentVer) {
-                showModal('Update Blocked', `<strong>THIS UPDATE IS IN USED</strong><br><br>The system is already running ${type} version ${selectedVer}.`, [{ text: 'OK' }]);
-                return;
-            }
-        }
+          if (forceUsb && !useUsb) {
+            showUpdateModalError('Backend is not connected. Only USB Serial update is available.');
+            return;
+          }
 
-        hideModal(); // Chỉ đóng modal khi thực sự tiến hành OTA
-        startOTA(type, url);
-      }},
-      { text: 'Cancel' }
+          if (useUsb) {
+            showUpdateModalError(localMode
+              ? 'Use the USB Flash Dashboard shown in this modal to click CONNECT and flash the selected local files.'
+              : 'Use the USB Flash Dashboard shown in this modal to click CONNECT and flash the selected package.');
+            return;
+          }
+
+          const selectedVersion = document.querySelector('input[name="update-version"]:checked')?.value;
+          const selectedGroup = catalog.versions.find((group) => group.version === selectedVersion);
+          if (!selectedGroup) {
+            showUpdateModalError('Please select a version.');
+            return;
+          }
+
+          if (isGroupAlreadyInstalled(selectedGroup)) {
+            showUpdateModalError(`Version ${selectedGroup.version} is already active for all selected packages.`);
+            return;
+          }
+
+          const steps = createOtaStepsFromGroup(selectedGroup);
+          if (!steps.length) {
+            showUpdateModalError('No OTA package was found for the selected version.');
+            return;
+          }
+
+          hideModal();
+          otaMode = 'ota';
+          otaPlan = { version: selectedGroup.version, steps };
+          otaCurrentStepIndex = -1;
+          startNextPlannedOtaStep();
+        },
+      },
+      { text: 'Cancel' },
     ]);
+
+    wireUpdateModalInteractions(catalog, { forceUsb });
   } catch (err) {
     showModal('Error', `GitHub API Error: ${err.message}`, [{ text: 'OK' }]);
   }
-}
-
-function startOTA(type, url) {
-  const progressContainer = document.getElementById('ota-progress-container');
-  if (progressContainer) progressContainer.classList.remove('hidden');
-  document.getElementById('ota-status-label').textContent = `Updating ${type}...`;
-  document.getElementById('ota-progress-bar').style.width = '0%';
-  document.getElementById('ota-percent').textContent = '0%';
-  sendCommand('otaUpdate', { type: type, url: url });
 }
 
 // ===== SAVE RELATIVE SETTINGS TO FRAM =====
@@ -1766,6 +3113,21 @@ function initMotorModeChangeHandlers() {
     }
   };
 
+// ===========================
+// SCROLL TO BOTTOM BUTTON
+// ===========================
+(function() {
+  const btn = document.getElementById('scroll-bottom-btn');
+  if (!btn) return;
+  window.addEventListener('scroll', function() {
+    const nearBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 80);
+    btn.classList.toggle('visible', !nearBottom && window.scrollY > 200);
+  }, { passive: true });
+  btn.addEventListener('click', function() {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  });
+})();
+
   const onMstepChanged = (selectEl) => {
     if (isUpdatingFromWS) return;
     const val = parseInt(selectEl.value);
@@ -1828,8 +3190,8 @@ function initCollapsibles() {
     }
 
     header.addEventListener('click', (e) => {
-      // Prevent collapse when clicking buttons inside header (like in Log panel)
-      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+      // Chỉ ẩn/hiện panel khi click vào khu vực mũi tên (.toggle-icon)
+      if (!e.target.closest('.toggle-icon')) return;
       
       panel.classList.toggle('collapsed');
       
@@ -1854,13 +3216,6 @@ window.addEventListener('load', () => {
     const text = spEl.textContent;
     currentSpiffsVer = extractVersion(text);
     spEl.textContent = "spiffs " + currentSpiffsVer; // Đồng bộ định dạng hiển thị
-  }
-  
-  // Move Force Stop button to Header (before Status)
-  const forceStopBtn = document.getElementById('btn-force-stop');
-  const headerStatus = document.querySelector('.header-status');
-  if (forceStopBtn && headerStatus) {
-    headerStatus.insertBefore(forceStopBtn, headerStatus.firstChild);
   }
 
   window.scrollTo(0, 0);
@@ -1969,14 +3324,86 @@ document.addEventListener('contextmenu', (e) => {
   }
 });
 
-// Block mouse wheel on all inputs
+let panelWheelLock = false;
+let panelWheelAccum = 0;
+let panelWheelResetTimer = null;
+const PANEL_WHEEL_SNAP_THRESHOLD = 220;
+
+function getActivePanels() {
+  const activeTab = document.querySelector('.tab-content.active');
+  if (!activeTab) return [];
+  return Array.from(activeTab.querySelectorAll('.panel')).filter((panel) => !panel.classList.contains('hidden'));
+}
+
+function scrollToAdjacentPanel(direction) {
+  const panels = getActivePanels();
+  if (!panels.length) return;
+
+  const header = document.querySelector('.header');
+  const stickyOffset = (header ? header.offsetHeight : 0) + 8;
+  const currentTop = window.scrollY + stickyOffset;
+
+  let currentIndex = 0;
+  for (let i = 0; i < panels.length; i++) {
+    if (panels[i].offsetTop <= currentTop) {
+      currentIndex = i;
+    } else {
+      break;
+    }
+  }
+
+  const nextIndex = Math.max(0, Math.min(panels.length - 1, currentIndex + direction));
+  if (nextIndex === currentIndex) return;
+
+  panels[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Mouse wheel: small movement scrolls normally, strong movement snaps to next/previous panel
 document.addEventListener('wheel', (e) => {
   if (e.ctrlKey) {
     e.preventDefault(); // Prevent Ctrl+Wheel Zoom
+    return;
   }
+
   if (e.target.tagName === 'INPUT') {
     e.preventDefault();
+    return;
   }
+
+  // Keep native wheel behavior in internal scroll containers.
+  if (e.target.closest('.history-list, .wifi-list, .modal-body')) {
+    return;
+  }
+
+  if (panelWheelLock) {
+    e.preventDefault();
+    return;
+  }
+
+  if (Math.abs(e.deltaY) < 8) {
+    return;
+  }
+
+  panelWheelAccum += e.deltaY;
+  if (panelWheelResetTimer) clearTimeout(panelWheelResetTimer);
+  panelWheelResetTimer = setTimeout(() => {
+    panelWheelAccum = 0;
+    panelWheelResetTimer = null;
+  }, 180);
+
+  if (Math.abs(panelWheelAccum) < PANEL_WHEEL_SNAP_THRESHOLD) {
+    return;
+  }
+
+  e.preventDefault();
+  panelWheelLock = true;
+  const direction = panelWheelAccum > 0 ? 1 : -1;
+  panelWheelAccum = 0;
+  scrollToAdjacentPanel(direction);
+
+  setTimeout(() => {
+    panelWheelLock = false;
+  }, 420);
 }, { passive: false });
 
 // Prevent Pinch Zoom (Mobile)

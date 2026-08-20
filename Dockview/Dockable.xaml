@@ -4,7 +4,10 @@
                     xmlns:view="clr-namespace:MLAstro_Robotic_Polar_Alignment.Dockables">
 
     <DataTemplate DataType="{x:Type vm:PolarAlignmentDockVM}">
-        <view:PolarAlignmentDockable />
+        <DockPanel>
+            <view:HeaderBar DockPanel.Dock="Top" />
+            <view:PolarAlignmentDockable />
+        </DockPanel>
     </DataTemplate>
 
 </ResourceDictionary>

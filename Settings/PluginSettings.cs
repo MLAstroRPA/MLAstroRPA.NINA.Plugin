@@ -89,6 +89,18 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
             set => SetInt(value);
         }
 
+        public int HandshakeTimeoutMilliseconds
+        {
+            get => GetInt(nameof(HandshakeTimeoutMilliseconds), 300);
+            set => SetInt(value);
+        }
+
+        public int PollingIntervalMilliseconds
+        {
+            get => GetInt(nameof(PollingIntervalMilliseconds), 300);
+            set => SetInt(value);
+        }
+
         public bool ShowHardlimitMonitor
         {
             get => GetBool(nameof(ShowHardlimitMonitor), false);
@@ -302,6 +314,42 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
         public int BacklashAlt
         {
             get => GetInt(nameof(BacklashAlt), 80);
+            set => SetInt(value);
+        }
+
+        public bool OvershootEnabled
+        {
+            get => GetBool(nameof(OvershootEnabled), false);
+            set => SetBool(value);
+        }
+
+        public bool OvershootMoveUp
+        {
+            get => GetBool(nameof(OvershootMoveUp), false);
+            set => SetBool(value);
+        }
+
+        public bool OvershootMoveDown
+        {
+            get => GetBool(nameof(OvershootMoveDown), false);
+            set => SetBool(value);
+        }
+
+        public int OvershootDegrees
+        {
+            get => GetInt(nameof(OvershootDegrees), 0);
+            set => SetInt(value);
+        }
+
+        public int OvershootMinutes
+        {
+            get => GetInt(nameof(OvershootMinutes), 0);
+            set => SetInt(value);
+        }
+
+        public int OvershootSeconds
+        {
+            get => GetInt(nameof(OvershootSeconds), 0);
             set => SetInt(value);
         }
 

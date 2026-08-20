@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using MLAstro_Robotic_Polar_Alignment.Dockables;
 using MLAstro_Robotic_Polar_Alignment.Plugin;
 using MLAstro_Robotic_Polar_Alignment.Services;
  
@@ -20,6 +21,96 @@ namespace MLAstro_Robotic_Polar_Alignment
         public Options()
         {
             InitializeComponent();
+        }
+
+        private FrameworkElement _optionsHeader;
+        private FrameworkElement _optionsTabHost;
+        private TranslateTransform _optionsHeaderTranslate;
+        private TranslateTransform _optionsTabHostTranslate;
+        private double _headerTopInContent;
+
+        private void OnOptionsRootLoaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement root)
+            {
+                return;
+            }
+
+            _optionsHeader = FindDescendant<HeaderBar>(root) as FrameworkElement;
+            if (_optionsHeader != null)
+            {
+                // Create the transform on the UI thread (Loaded event) and attach it once.
+                // Do NOT declare it in XAML (a template Freezable becomes read-only/frozen)
+                // and do NOT create it in a field initializer (Options may be constructed on a
+                // non-UI thread, making the transform owned by that thread).
+                _optionsHeaderTranslate = new TranslateTransform();
+                _optionsHeader.RenderTransform = _optionsHeaderTranslate;
+            }
+
+            var tabControl = FindDescendant<TabControl>(root);
+            if (tabControl?.Items.Count >= 3 &&
+                tabControl.Items[1] is TabItem connectionTab &&
+                tabControl.Items[2] is TabItem configurationTab &&
+                Equals(connectionTab.Header, "CONNECTION") &&
+                Equals(configurationTab.Header, "CONFIGURATION"))
+            {
+                tabControl.Items.RemoveAt(2);
+                tabControl.Items.Insert(1, configurationTab);
+            }
+
+            if (tabControl?.Template.FindName("HeaderHost", tabControl) is FrameworkElement tabHost)
+            {
+                _optionsTabHost = tabHost;
+                _optionsTabHostTranslate = new TranslateTransform();
+                tabHost.RenderTransform = _optionsTabHostTranslate;
+            }
+
+            // NINA hosts the plugin options inside its own ScrollViewer, so a layout-based
+            // fixed header would scroll away. Find the ScrollViewer that scrolls the options
+            // and translate the header to keep it pinned to the top of the viewport.
+            var scrollViewer = FindOutermostAncestor<ScrollViewer>(root)
+                ?? FindAncestor<ScrollViewer>(root);
+            if (scrollViewer != null)
+            {
+                if (_optionsHeader != null)
+                {
+                    // Distance from the top of the scroll content to the header (constant
+                    // regardless of scroll). The header is NOT at the very top of the scroll
+                    // content because NINA's own plugin page header sits above it.
+                    _headerTopInContent = _optionsHeader.TranslatePoint(new Point(0, 0), scrollViewer).Y
+                        + scrollViewer.VerticalOffset;
+                }
+
+                scrollViewer.ScrollChanged -= OnOuterOptionsScrollChanged;
+                scrollViewer.ScrollChanged += OnOuterOptionsScrollChanged;
+                UpdateOptionsHeaderPin(scrollViewer);
+            }
+        }
+
+        private void OnOuterOptionsScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            if (sender is ScrollViewer scrollViewer)
+            {
+                UpdateOptionsHeaderPin(scrollViewer);
+            }
+        }
+
+        private void UpdateOptionsHeaderPin(ScrollViewer scrollViewer)
+        {
+            // Let the header scroll up with the content until its top reaches the top of the
+            // viewport, then pin it there (sticky) instead of letting it scroll away. The tab
+            // bar is pinned together with the header, staying right below it.
+            var y = Math.Max(0, (scrollViewer?.VerticalOffset ?? 0d) - _headerTopInContent);
+
+            if (_optionsHeaderTranslate != null)
+            {
+                _optionsHeaderTranslate.Y = y;
+            }
+
+            if (_optionsTabHostTranslate != null)
+            {
+                _optionsTabHostTranslate.Y = y;
+            }
         }
 
         private void OnScrollViewerPreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -50,6 +141,14 @@ namespace MLAstro_Robotic_Polar_Alignment
             scrollViewer.RemoveHandler(UIElement.PreviewMouseWheelEvent, new MouseWheelEventHandler(OnScrollViewerPreviewMouseWheel));
             scrollViewer.AddHandler(UIElement.PreviewMouseWheelEvent, new MouseWheelEventHandler(OnScrollViewerPreviewMouseWheel), true);
             RegisterPanelMouseWheelHandlers(scrollViewer.Content as DependencyObject);
+        }
+
+        private void OnComPortDropDownOpened(object sender, EventArgs e)
+        {
+            if (sender is ComboBox comboBox && comboBox.DataContext is MLAstroManifest manifest)
+            {
+                manifest.RefreshComPortsCommand.Execute(null);
+            }
         }
 
         private void OnSerialTerminalInputPreviewKeyDown(object sender, KeyEventArgs e)
@@ -87,6 +186,49 @@ namespace MLAstro_Robotic_Polar_Alignment
             var caretIndex = Math.Min(textBox.CaretIndex, sanitizedText.Length);
             textBox.Text = sanitizedText;
             textBox.CaretIndex = caretIndex;
+        }
+
+        private void OnNumericOnlyPreviewTextInput(object sender, TextCompositionEventArgs e)
+        {
+            e.Handled = e.Text == null || e.Text.Any(c => !char.IsDigit(c));
+        }
+
+        private void OnTimingTextBoxKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter)
+            {
+                return;
+            }
+
+            // Commit the pending binding value to the source so it persists immediately
+            if (sender is TextBox textBox)
+            {
+                textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            }
+
+            // Clear focus so LostFocus also commits, and consume the Enter key
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+
+        private void OnSerialTerminalResizeThumbDragDelta(object sender, System.Windows.Controls.Primitives.DragDeltaEventArgs e)
+        {
+            // The RichTextBox is a sibling of this Thumb (this element is inside a DataTemplate,
+            // so it cannot be referenced by name - locate it through the visual tree instead).
+            if (sender is not DependencyObject thumb)
+            {
+                return;
+            }
+
+            var parent = System.Windows.Media.VisualTreeHelper.GetParent(thumb);
+            var richTextBox = FindDescendant<RichTextBox>(parent);
+            if (richTextBox == null)
+            {
+                return;
+            }
+
+            var newHeight = richTextBox.ActualHeight + e.VerticalChange;
+            richTextBox.Height = Math.Max(180, newHeight);
         }
 
         private void OnSerialTerminalLoaded(object sender, RoutedEventArgs e)
@@ -156,6 +298,7 @@ namespace MLAstro_Robotic_Polar_Alignment
             if (state.TerminalScrollViewer != null)
             {
                 state.TerminalScrollViewer.ScrollChanged += state.ScrollChangedHandler;
+                state.IsScrollChangedHandlerAttached = true;
             }
 
             richTextBox.RemoveHandler(UIElement.PreviewMouseWheelEvent, new MouseWheelEventHandler(OnSerialTerminalPreviewMouseWheel));
@@ -179,6 +322,37 @@ namespace MLAstro_Robotic_Polar_Alignment
             }
 
             scrollViewer.ScrollToVerticalOffset(scrollViewer.VerticalOffset - (e.Delta / 3d));
+            e.Handled = true;
+        }
+
+        private void OnSerialTerminalPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            // HOME = scroll to top, END = scroll to bottom (terminal must have focus)
+            if (e.Key != Key.Home && e.Key != Key.End)
+            {
+                return;
+            }
+
+            if (sender is not RichTextBox richTextBox)
+            {
+                return;
+            }
+
+            var scrollViewer = FindDescendant<ScrollViewer>(richTextBox);
+            if (scrollViewer == null)
+            {
+                return;
+            }
+
+            if (e.Key == Key.Home)
+            {
+                scrollViewer.ScrollToTop();
+            }
+            else
+            {
+                scrollViewer.ScrollToEnd();
+            }
+
             e.Handled = true;
         }
 
@@ -299,12 +473,24 @@ namespace MLAstro_Robotic_Polar_Alignment
 
                 state.TerminalScrollViewer = scrollViewer;
 
+                // Ensure the user-scroll detection handler is attached to the actual
+                // ScrollViewer (it may not be available at Loaded time).
+                if (!state.IsScrollChangedHandlerAttached)
+                {
+                    scrollViewer.ScrollChanged += state.ScrollChangedHandler;
+                    state.IsScrollChangedHandlerAttached = true;
+                }
+
                 if (shouldAutoScroll)
                 {
-                    richTextBox.ScrollToEnd();
+                    // Scroll to the newest content. Do NOT recompute ShouldAutoScroll here -
+                    // it is only driven by the user's ScrollChanged handler, otherwise a
+                    // transient layout state can wrongly flip it off and push the view up.
+                    scrollViewer.ScrollToEnd();
                 }
                 else
                 {
+                    // User scrolled away from the bottom: keep the current view still
                     scrollViewer.ScrollToVerticalOffset(previousVerticalOffset);
                 }
             }
@@ -313,7 +499,6 @@ namespace MLAstro_Robotic_Polar_Alignment
                 if (state.TerminalScrollViewer != null)
                 {
                     state.LastVerticalOffset = state.TerminalScrollViewer.VerticalOffset;
-                    state.ShouldAutoScroll = IsAtBottom(state.TerminalScrollViewer);
                 }
 
                 state.IsUpdatingScroll = false;
@@ -506,6 +691,8 @@ namespace MLAstro_Robotic_Polar_Alignment
             public bool ShouldAutoScroll { get; set; }
 
             public bool IsUpdatingScroll { get; set; }
+
+            public bool IsScrollChangedHandlerAttached { get; set; }
 
             public double LastVerticalOffset { get; set; }
         }
