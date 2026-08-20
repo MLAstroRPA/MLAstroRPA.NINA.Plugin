@@ -3,7 +3,7 @@
 
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "1.0.0"
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,10 +12,61 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $ScriptDir)
 $MSIProjectDir = $ScriptDir
 $OutputDir = Join-Path (Split-Path -Parent $ScriptDir) "Output"
+$PackageWxs = Join-Path $MSIProjectDir "Package.wxs"
 
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "MLAstro RPA Plugin - MSI Builder" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
+Write-Host ""
+
+# ========== VERSION PUMP ==========
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    # Announce the current version already present in Output (if any)
+    $existingMsi = Get-ChildItem -Path $OutputDir -Filter "MLAstro_RPA_Plugin_*.msi" -ErrorAction SilentlyContinue |
+                   Sort-Object Name -Descending | Select-Object -First 1
+    $currentVersion = $null
+
+    if ($existingMsi) {
+        if ($existingMsi.Name -match 'MLAstro_RPA_Plugin_(\d+\.\d+\.\d+(\.\d+)?)\.msi') {
+            $currentVersion = $matches[1]
+            Write-Host "Current version in Output: $currentVersion  ($($existingMsi.Name))" -ForegroundColor Green
+        } else {
+            Write-Host "Found in Output: $($existingMsi.Name) (cannot parse version)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "Output: chua co MSI nao (no output yet)." -ForegroundColor Yellow
+    }
+
+    # Suggest the next patch version (e.g. 2.0.0.1 -> 2.0.0.2)
+    $suggested = "1.0.0"
+    if ($currentVersion -match '^(\d+)\.(\d+)\.(\d+)$') {
+        $suggested = "{0}.{1}.{2}" -f $matches[1], $matches[2], ([int]$matches[3] + 1)
+    } elseif ($currentVersion -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
+        $suggested = "{0}.{1}.{2}.{3}" -f $matches[1], $matches[2], $matches[3], ([int]$matches[4] + 1)
+    }
+
+    do {
+        $Version = Read-Host "Enter new version [default: $suggested]"
+        if ([string]::IsNullOrWhiteSpace($Version)) { $Version = $suggested }
+        if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+            Write-Host "Invalid version format - use e.g. 2.0.0.2" -ForegroundColor Red
+            $Version = ""
+        }
+    } while ([string]::IsNullOrWhiteSpace($Version))
+
+    Write-Host "Version set to: $Version" -ForegroundColor Green
+}
+
+# Sync the ProductVersion define in Package.wxs with the chosen version
+$wxsContent = [System.IO.File]::ReadAllText($PackageWxs)
+if ($wxsContent -match '<\?define ProductVersion = "[^"]*" \?>') {
+    $wxsContent = $wxsContent -replace '<\?define ProductVersion = "[^"]*" \?>', "<?define ProductVersion = `"$Version`" ?>"
+    [System.IO.File]::WriteAllText($PackageWxs, $wxsContent, (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "Package.wxs ProductVersion updated to $Version" -ForegroundColor Green
+} else {
+    Write-Host "WARNING: Could not find ProductVersion define in Package.wxs" -ForegroundColor Yellow
+}
+
 Write-Host ""
 
 # Check for WiX Toolset

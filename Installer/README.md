@@ -63,7 +63,7 @@ Create a Windows Installer MSI package:
 
 ```powershell
 cd MSI
-.\Build-MSI.ps1
+.\Release-MSI.ps1
 ```
 
 The MSI will be created in `Output\MLAstro_RPA_Plugin_1.0.0.msi`
@@ -115,13 +115,13 @@ dotnet build -c Release
 .\Build-Installer.ps1 -InnoSetupPath "D:\Tools\InnoSetup\ISCC.exe"
 ```
 
-**Build-MSI.ps1:**
+**Release-MSI.ps1:**
 ```powershell
 # Specify version
-.\Build-MSI.ps1 -Version "1.2.0"
+.\Release-MSI.ps1 -Version "1.2.0"
 
 # Debug build
-.\Build-MSI.ps1 -Configuration Debug
+.\Release-MSI.ps1 -Configuration Debug
 ```
 
 ## Output Files
@@ -155,7 +155,7 @@ Installer/
 ├── Setup.iss              # Inno Setup script
 ├── README.md              # This file
 ├── MSI/                   # MSI installer project
-│   ├── Build-MSI.ps1      # MSI build script
+│   ├── Release-MSI.ps1    # MSI build script
 │   ├── MLAstro.RPA.Installer.wixproj
 │   ├── Package.wxs        # WiX package definition
 │   └── License.rtf        # License for MSI
