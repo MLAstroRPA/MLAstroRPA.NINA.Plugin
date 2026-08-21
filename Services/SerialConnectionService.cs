@@ -25,6 +25,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private const int MaxTerminalEntries = 500;
         private const string InitialHandshakeCommand = "[MLAstroRPA-TC]\n";
         private const string ConnectionCheckCommand = "?\n";
+        private const int PortOpenTimeoutMilliseconds = 3000;
         public const int HandshakeTimeoutMinMilliseconds = 100;
         public const int HandshakeTimeoutMaxMilliseconds = 5000;
         private int _handshakeTimeoutMilliseconds = 300;
@@ -90,6 +91,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private TaskCompletionSource<bool> _anyResponseTcs;
         private System.Timers.Timer _connectionCheckTimer;
         private int _connectionCheckInProgress;
+        private int _portOpenInProgress;
 
         public event PropertyChangedEventHandler PropertyChanged;
         public event EventHandler<TelemetryDataEventArgs> TelemetryDataReceived;
@@ -268,7 +270,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 .ToArray();
         }
 
-        public bool Connect(string portName, int baudRate)
+        public async Task<bool> ConnectAsync(string portName, int baudRate)
         {
             if (string.IsNullOrWhiteSpace(portName))
             {
@@ -276,19 +278,67 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return false;
             }
 
+            if (Interlocked.CompareExchange(ref _portOpenInProgress, 1, 0) != 0)
+            {
+                ConnectionStatus = "Previous COM port open is still finishing";
+                return false;
+            }
+
+            SerialPort openingPort = null;
+            var cleanupAfterTimeout = false;
             try
             {
                 Disconnect();
 
-                _serialPort = new SerialPort(portName, baudRate, Parity.None, 8, StopBits.One)
+                openingPort = new SerialPort(portName, baudRate, Parity.None, 8, StopBits.One)
                 {
                     Handshake = Handshake.None,
                     ReadTimeout = 1000,
                     WriteTimeout = 1000,
                     Encoding = Encoding.UTF8
                 };
-                _serialPort.DataReceived += OnSerialPortDataReceived;
-                _serialPort.Open();
+                openingPort.DataReceived += OnSerialPortDataReceived;
+
+                var openTask = Task.Run(openingPort.Open);
+                if (await Task.WhenAny(openTask, Task.Delay(PortOpenTimeoutMilliseconds)).ConfigureAwait(false) != openTask)
+                {
+                    var timedOutPort = openingPort;
+                    openingPort = null;
+                    cleanupAfterTimeout = true;
+                    ConnectionStatus = $"Connect timed out after {PortOpenTimeoutMilliseconds} ms: {portName}";
+                    Logger.Warning($"[MLAstro] Serial connect timed out: {portName} @ {baudRate}");
+
+                    _ = openTask.ContinueWith(task =>
+                    {
+                        try
+                        {
+                            timedOutPort.DataReceived -= OnSerialPortDataReceived;
+                            if (timedOutPort.IsOpen)
+                            {
+                                timedOutPort.Close();
+                            }
+                            timedOutPort.Dispose();
+                            if (task.IsFaulted)
+                            {
+                                Logger.Warning($"[MLAstro] Timed-out serial open failed: {task.Exception?.GetBaseException().Message}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warning($"[MLAstro] Timed-out serial port cleanup failed: {ex.Message}");
+                        }
+                        finally
+                        {
+                            Interlocked.Exchange(ref _portOpenInProgress, 0);
+                        }
+                    }, TaskScheduler.Default);
+
+                    return false;
+                }
+
+                await openTask.ConfigureAwait(false);
+                _serialPort = openingPort;
+                openingPort = null;
 
                 ConnectionStatus = $"Connected: {portName} @ {baudRate} (8-N-1)";
                 HandshakeStatus = string.Empty;
@@ -305,6 +355,19 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 DisconnectPortInstance();
                 OnPropertyChanged(nameof(IsConnected));
                 return false;
+            }
+            finally
+            {
+                if (openingPort != null)
+                {
+                    openingPort.DataReceived -= OnSerialPortDataReceived;
+                    openingPort.Dispose();
+                }
+
+                if (!cleanupAfterTimeout)
+                {
+                    Interlocked.Exchange(ref _portOpenInProgress, 0);
+                }
             }
         }
 

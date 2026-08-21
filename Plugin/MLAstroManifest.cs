@@ -550,7 +550,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             OnPropertyChanged(nameof(AvailableComPorts));
         }
 
-        private void ToggleSerialConnection()
+        private async void ToggleSerialConnection()
         {
             if (IsSerialConnected)
             {
@@ -559,7 +559,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
 
             RefreshComPorts();
-            _serialConnectionService.Connect(Settings.ComPort, Settings.BaudRate);
+            await _serialConnectionService.ConnectAsync(Settings.ComPort, Settings.BaudRate);
         }
 
         private void SendSerial()
@@ -721,7 +721,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                     RefreshComPorts();
 
                     AutoReconnectStatus = $"Connecting... (attempt {attempt + 1}/{maxConnectAttempts})";
-                    connected = _serialConnectionService.Connect(Settings.ComPort, Settings.BaudRate);
+                    connected = await _serialConnectionService.ConnectAsync(Settings.ComPort, Settings.BaudRate);
                     if (!connected)
                     {
                         continue;
