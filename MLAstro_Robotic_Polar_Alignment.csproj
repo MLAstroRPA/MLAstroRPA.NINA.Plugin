@@ -180,4 +180,14 @@
 		<RemoveDir Directories="$(PluginTargetDir)\runtimes" Condition="Exists('$(PluginTargetDir)\runtimes')" />
 	</Target>
 
+	<!-- Keep the MSI/GitHub-release staging copy of the plugin DLL fresh on every Release build -->
+	<Target Name="RefreshInstallerPluginDll" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Release'">
+		<PropertyGroup>
+			<StagedPluginDir>$(ProjectDir)Installer\MSI\Plugin\MLAstro_Robotic_Polar_Alignment</StagedPluginDir>
+		</PropertyGroup>
+		<MakeDir Directories="$(StagedPluginDir)" Condition="!Exists('$(StagedPluginDir)')" />
+		<Copy SourceFiles="$(TargetDir)MLAstro_Robotic_Polar_Alignment.dll" DestinationFolder="$(StagedPluginDir)" />
+		<Message Importance="High" Text="[MLAstro] Copied plugin DLL to $(StagedPluginDir)" />
+	</Target>
+
 </Project>
