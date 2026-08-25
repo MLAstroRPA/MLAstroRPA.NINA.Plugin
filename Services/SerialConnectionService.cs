@@ -506,6 +506,9 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                     var timedOutPort = openingPort;
                     openingPort = null;
                     cleanupAfterTimeout = true;
+                    // Release the in-progress flag immediately so the user can try another port.
+                    // The abandoned openTask may still be hanging; the continuation below only cleans up.
+                    Interlocked.Exchange(ref _portOpenInProgress, 0);
                     ConnectionStatus = $"Connect timed out after {PortOpenTimeoutMilliseconds} ms: {portName}";
                     Logger.Warning($"[MLAstro] Serial connect timed out: {portName} @ {baudRate}");
 
@@ -527,10 +530,6 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                         catch (Exception ex)
                         {
                             Logger.Warning($"[MLAstro] Timed-out serial port cleanup failed: {ex.Message}");
-                        }
-                        finally
-                        {
-                            Interlocked.Exchange(ref _portOpenInProgress, 0);
                         }
                     }, TaskScheduler.Default);
 
