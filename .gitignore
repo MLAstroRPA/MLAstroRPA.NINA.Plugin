@@ -11,6 +11,5 @@ obj/
 *.suo
 *.userosscache
 *.sln.docstates
-.Installer/Output/
-.Installer/MSI/bin/
-.Installer/MSI/obj/
+
+Installer/
