@@ -6,6 +6,7 @@ using System.ComponentModel.Composition;
 using System.Globalization;
 using System.IO.Ports;
 using System.Linq;
+using System.Management;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,6 +14,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
+using Microsoft.Win32;
 using MLAstro_Robotic_Polar_Alignment.Settings;
 using NINA.Core.Utility;
  
@@ -26,6 +28,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private const string InitialHandshakeCommand = "[MLAstroRPA-TC]\n";
         private const string ConnectionCheckCommand = "?\n";
         private const int PortOpenTimeoutMilliseconds = 3000;
+        private const int ConnectionCheckFailThreshold = 3;
         public const int HandshakeTimeoutMinMilliseconds = 100;
         public const int HandshakeTimeoutMaxMilliseconds = 5000;
         private int _handshakeTimeoutMilliseconds = 300;
@@ -80,6 +83,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private volatile bool _applyingTelemetrySettings;
         private SerialPort _serialPort;
         private string[] _availablePorts = Array.Empty<string>();
+        private ComPortInfo[] _availableComPortInfos = Array.Empty<ComPortInfo>();
         private string _connectionStatus = "Disconnected";
         private string _handshakeStatus = string.Empty;
         private string _firmwareVersion = "unknown";
@@ -92,6 +96,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private System.Timers.Timer _connectionCheckTimer;
         private int _connectionCheckInProgress;
         private int _portOpenInProgress;
+        private int _connectionCheckFailures;
+        private ManagementEventWatcher _deviceChangeWatcher;
 
         public event PropertyChangedEventHandler PropertyChanged;
         public event EventHandler<TelemetryDataEventArgs> TelemetryDataReceived;
@@ -128,6 +134,20 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             private set
             {
                 _availablePorts = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// COM ports with their driver-friendly display names (e.g. "COM4 - USB-SERIAL CH340").
+        /// <see cref="ComPortInfo.PortName"/> keeps the raw name used for connecting.
+        /// </summary>
+        public ComPortInfo[] AvailableComPortInfos
+        {
+            get => _availableComPortInfos;
+            private set
+            {
+                _availableComPortInfos = value;
                 OnPropertyChanged();
             }
         }
@@ -265,9 +285,190 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
         public void RefreshPorts()
         {
-            AvailablePorts = SerialPort.GetPortNames()
+            // GetPortNames() can return the same COMx several times (e.g. multiple virtual
+            // HHD ports all mapped to COM1 in HKLM\HARDWARE\DEVICEMAP\SERIALCOMM), so
+            // de-duplicate before ordering.
+            var portNames = SerialPort.GetPortNames()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+            // Keep the SAME array instances when nothing changed. Replacing the ComboBox
+            // ItemsSource with fresh objects makes WPF drop the current selection and push
+            // null back into Settings.ComPort (TwoWay SelectedValue) - that is why the COM
+            // port appears to deselect right after choosing it and clicking Connect.
+            if (portNames.SequenceEqual(_availablePorts, StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            AvailablePorts = portNames;
+
+            // Build display names (driver name + COM number) from the Windows device tree.
+            var friendlyNames = GetComPortFriendlyNames();
+            AvailableComPortInfos = portNames
+                .Select(p => new ComPortInfo(p, friendlyNames.TryGetValue(p, out var fn) ? fn : null))
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Maps each enumerated COM port to its driver friendly name by walking the Windows
+        /// device tree (HKLM\SYSTEM\CurrentControlSet\Enum). E.g. "COM4" -> "Silicon Labs CP210x USB to UART Bridge (COM4)".
+        /// </summary>
+        private static Dictionary<string, string> GetComPortFriendlyNames()
+        {
+            var best = new Dictionary<string, PortFriendlyCandidate>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var rootKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum");
+                if (rootKey == null)
+                {
+                    return ToFriendlyNames(best);
+                }
+
+                foreach (var busName in rootKey.GetSubKeyNames())
+                {
+                    using var busKey = rootKey.OpenSubKey(busName);
+                    if (busKey == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var deviceName in busKey.GetSubKeyNames())
+                    {
+                        using var deviceKey = busKey.OpenSubKey(deviceName);
+                        if (deviceKey == null)
+                        {
+                            continue;
+                        }
+
+                        WalkDeviceSubtree(deviceKey, best);
+                    }
+                }
+            }
+            catch
+            {
+                // Registry access can fail on some systems; return what was collected.
+            }
+
+            return ToFriendlyNames(best);
+        }
+
+        private static Dictionary<string, string> ToFriendlyNames(Dictionary<string, PortFriendlyCandidate> best)
+            => best.Where(kv => !string.IsNullOrWhiteSpace(kv.Value.FriendlyName))
+                   .ToDictionary(kv => kv.Key, kv => kv.Value.FriendlyName);
+
+        private static void WalkDeviceSubtree(RegistryKey key, Dictionary<string, PortFriendlyCandidate> best)
+        {
+            try
+            {
+                CollectComPortFromKey(key, best);
+
+                // Some Enum keys have restricted ACLs and throw on enumeration (SecurityException);
+                // skip those keys and keep walking the rest so friendly names are still resolved.
+                foreach (var subName in key.GetSubKeyNames())
+                {
+                    using var subKey = key.OpenSubKey(subName);
+                    if (subKey != null)
+                    {
+                        WalkDeviceSubtree(subKey, best);
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore restricted/inaccessible keys and continue with other branches.
+            }
+        }
+
+        /// <summary>
+        /// Collects a COM port candidate from one registry key. Candidates are scored so the
+        /// most specific entry wins: a key whose "Device Parameters\PortName" AND friendly name
+        /// both mention the same port is preferred, and virtual/composite devices (Bluetooth,
+        /// virtual network ports, ...) are deprioritized so the real USB-serial adapter wins.
+        /// </summary>
+        private static void CollectComPortFromKey(RegistryKey key, Dictionary<string, PortFriendlyCandidate> best)
+        {
+            try
+            {
+                string portName = null;
+                using (var deviceParams = key.OpenSubKey("Device Parameters"))
+                {
+                    portName = deviceParams?.GetValue("PortName") as string;
+                }
+
+                var friendly = key.GetValue("FriendlyName") as string;
+                if (string.IsNullOrWhiteSpace(friendly))
+                {
+                    return;
+                }
+
+                var normalizedPort = NormalizePortName(portName);
+                var portMatch = !string.IsNullOrWhiteSpace(normalizedPort)
+                                && Regex.IsMatch(normalizedPort, @"^COM\d+$", RegexOptions.IgnoreCase);
+
+                // Port mentioned in the friendly name, e.g. "... USB to UART Bridge (COM4)".
+                var match = Regex.Match(friendly, @"\(COM\d+\)", RegexOptions.IgnoreCase);
+                var friendlyPort = match.Success ? NormalizePortName(match.Value.Trim('(', ')')) : null;
+                var friendlyPortMatch = portMatch
+                                        && string.Equals(normalizedPort, friendlyPort, StringComparison.OrdinalIgnoreCase);
+
+                var isVirtual = Regex.IsMatch(friendly, @"Bluetooth|Network Serial|Virtual|Emulator", RegexOptions.IgnoreCase);
+
+                if (portMatch)
+                {
+                    var score = 2 + (friendlyPortMatch ? 2 : 0) + (isVirtual ? 0 : 1);
+                    UpdateBest(best, normalizedPort, score, friendly);
+                }
+
+                if (!string.IsNullOrWhiteSpace(friendlyPort))
+                {
+                    var score = 1 + (friendlyPortMatch ? 2 : 0) + (isVirtual ? 0 : 1);
+                    UpdateBest(best, friendlyPort, score, friendly);
+                }
+            }
+            catch
+            {
+                // Ignore failures for individual device keys.
+            }
+        }
+
+        private static void UpdateBest(Dictionary<string, PortFriendlyCandidate> best, string portName, int score, string friendly)
+        {
+            if (best.TryGetValue(portName, out var existing) && existing.Score >= score)
+            {
+                return;
+            }
+
+            best[portName] = new PortFriendlyCandidate(score, friendly);
+        }
+
+        private static string NormalizePortName(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var trimmed = value.Trim();
+            if (trimmed.StartsWith(@"\\.\", StringComparison.Ordinal))
+            {
+                trimmed = trimmed.Substring(4);
+            }
+
+            return trimmed;
+        }
+
+        private readonly struct PortFriendlyCandidate
+        {
+            public PortFriendlyCandidate(int score, string friendlyName)
+            {
+                Score = score;
+                FriendlyName = friendlyName;
+            }
+
+            public int Score { get; }
+            public string FriendlyName { get; }
         }
 
         public async Task<bool> ConnectAsync(string portName, int baudRate)
@@ -342,9 +543,12 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
                 ConnectionStatus = $"Connected: {portName} @ {baudRate} (8-N-1)";
                 HandshakeStatus = string.Empty;
+                _connectionCheckFailures = 0;
                 AppendTerminalEntry(SerialTerminalEntry.Connected(ConnectionStatus));
                 OnPropertyChanged(nameof(IsConnected));
                 Logger.Info($"[MLAstro] Serial connected: {portName} @ {baudRate} (8-N-1)");
+                StartConnectionCheckTimer();
+                StartDeviceChangeWatcher();
                 _ = StartHandshakeAndConnectionChecksAsync();
                 return true;
             }
@@ -416,6 +620,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
         public void Disconnect()
         {
+            _connectionCheckFailures = 0;
+
             if (_serialPort == null)
             {
                 ConnectionStatus = "Disconnected";
@@ -800,30 +1006,171 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             Interlocked.Exchange(ref _connectionCheckInProgress, 0);
         }
 
-        private async Task RunConnectionCheckAsync()
+        private void StartDeviceChangeWatcher()
         {
-            // Skip if paused globally
-            if (PauseQueryGlobal)
-            {
-                return;
-            }
-
-            if (!IsConnected || Interlocked.Exchange(ref _connectionCheckInProgress, 1) == 1)
+            if (_deviceChangeWatcher != null)
             {
                 return;
             }
 
             try
             {
+                _deviceChangeWatcher = new ManagementEventWatcher(new WqlEventQuery("SELECT * FROM Win32_DeviceChangeEvent"));
+                _deviceChangeWatcher.EventArrived += OnDeviceChangeEvent;
+                _deviceChangeWatcher.Start();
+                Logger.Info("[MLAstro] Device change watcher started");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[MLAstro] Failed to start device change watcher: {ex.Message}");
+                _deviceChangeWatcher = null;
+            }
+        }
+
+        private void StopDeviceChangeWatcher()
+        {
+            if (_deviceChangeWatcher == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _deviceChangeWatcher.EventArrived -= OnDeviceChangeEvent;
+                _deviceChangeWatcher.Stop();
+                _deviceChangeWatcher.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[MLAstro] Failed to stop device change watcher: {ex.Message}");
+            }
+            finally
+            {
+                _deviceChangeWatcher = null;
+            }
+        }
+
+        private void OnDeviceChangeEvent(object sender, EventArrivedEventArgs e)
+        {
+            try
+            {
+                // The OS reports a device arrival/removal (same notification the serial debug
+                // tools use). If our connected COM port is gone, disconnect right away.
+                if (_serialPort == null)
+                {
+                    return;
+                }
+
+                var portGone = !_serialPort.IsOpen
+                    || !SerialPort.GetPortNames().Contains(_serialPort.PortName, StringComparer.OrdinalIgnoreCase);
+                if (portGone)
+                {
+                    Logger.Info("[MLAstro] Device change event: connected COM port is gone - auto disconnecting");
+                    Disconnect();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[MLAstro] Device change event handling failed: {ex.Message}");
+            }
+        }
+
+        private async Task RunConnectionCheckAsync()
+        {
+            // Already fully disconnected - nothing to monitor.
+            if (_serialPort == null)
+            {
+                return;
+            }
+
+            if (Interlocked.Exchange(ref _connectionCheckInProgress, 1) == 1)
+            {
+                return;
+            }
+
+            try
+            {
+                // Case 1: the OS/driver closed the port handle (some Windows 10 systems do
+                // this right after the USB adapter is unplugged). Finalize the disconnect so
+                // the UI no longer shows a stale "Connected: ..." status.
+                if (!_serialPort.IsOpen)
+                {
+                    Logger.Warning("[MLAstro] Serial port no longer open - auto disconnecting");
+                    Disconnect();
+                    return;
+                }
+
+                // Case 2: direct physical-unplug detection - when the USB cable is removed the
+                // .NET SerialPort usually keeps reporting IsOpen=true (a "ghost" port), so we
+                // check whether the OS still enumerates the connected COM port. This runs even
+                // while '?' polling is paused because it sends nothing.
+                if (IsComPortMissing())
+                {
+                    Logger.Warning($"[MLAstro] COM port {_serialPort.PortName} no longer present - auto disconnecting");
+                    Disconnect();
+                    return;
+                }
+
+                // Skip polling if paused globally
+                if (PauseQueryGlobal)
+                {
+                    return;
+                }
+
                 // The device is alive if it answers with ANY line within the timeout.
                 // This avoids the old bug where '?' returns telemetry (not "ok"), so waiting
                 // for an explicit "ok" could spuriously report "NO ANSWER".
                 var alive = await SendAndAwaitAnyAsync(ConnectionCheckCommand).ConfigureAwait(false);
-                UpdateHandshakeStatus(alive);
+
+                if (alive)
+                {
+                    _connectionCheckFailures = 0;
+                    UpdateHandshakeStatus(true);
+                    return;
+                }
+
+                // Fallback: the device is not answering. Auto-disconnect after a few consecutive
+                // misses so the UI flips back to "Connect" without a manual click.
+                _connectionCheckFailures++;
+                if (_connectionCheckFailures >= ConnectionCheckFailThreshold)
+                {
+                    Logger.Warning($"[MLAstro] No serial response for {_connectionCheckFailures} consecutive polls - auto disconnecting");
+                    Disconnect();
+                    return;
+                }
+
+                UpdateHandshakeStatus(false);
             }
             finally
             {
                 Interlocked.Exchange(ref _connectionCheckInProgress, 0);
+            }
+        }
+
+        /// <summary>
+        /// Returns true when the currently-connected COM port is no longer enumerated by the OS,
+        /// which indicates the USB serial adapter has been physically unplugged.
+        /// </summary>
+        private bool IsComPortMissing()
+        {
+            try
+            {
+                if (_serialPort == null || !_serialPort.IsOpen)
+                {
+                    return false;
+                }
+
+                var portName = _serialPort.PortName;
+                if (string.IsNullOrWhiteSpace(portName))
+                {
+                    return false;
+                }
+
+                return !SerialPort.GetPortNames().Contains(portName, StringComparer.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -1143,6 +1490,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             try
             {
                 ResetPendingHandshakeState();
+                StopDeviceChangeWatcher();
 
                 if (_serialPort != null)
                 {
@@ -1171,6 +1519,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
             // Stop connection check timer first
             StopConnectionCheckTimer();
+            StopDeviceChangeWatcher();
 
             // Reset pending handshake state
             ResetPendingHandshakeState();
@@ -1850,6 +2199,35 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             {
                 Logger.Warning($"[MLAstro] Failed to map parameter {key}={value}: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// A COM port entry for the CONNECTION dropdown: the raw port name (e.g. "COM4")
+    /// used for connecting, plus a human-readable display name (e.g. "COM4 - USB-SERIAL CH340").
+    /// </summary>
+    public class ComPortInfo
+    {
+        public ComPortInfo(string portName, string friendlyName)
+        {
+            PortName = portName;
+            DisplayName = BuildDisplayName(portName, friendlyName);
+        }
+
+        public string PortName { get; }
+        public string DisplayName { get; }
+
+        private static string BuildDisplayName(string portName, string friendlyName)
+        {
+            if (string.IsNullOrWhiteSpace(friendlyName))
+            {
+                return portName;
+            }
+
+            // Strip a trailing "(COMx)" from the friendly name to avoid duplication,
+            // e.g. "USB-SERIAL CH340 (COM4)" -> "USB-SERIAL CH340", then prefix the port number.
+            var cleaned = Regex.Replace(friendlyName, @"\s*\(COM\d+\)\s*$", string.Empty, RegexOptions.IgnoreCase).Trim();
+            return string.IsNullOrWhiteSpace(cleaned) ? portName : $"{portName} - {cleaned}";
         }
     }
 }

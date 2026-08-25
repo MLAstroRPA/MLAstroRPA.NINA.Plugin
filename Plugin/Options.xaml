@@ -88,8 +88,10 @@
                         <WrapPanel Margin="0,0,0,10">
                             <StackPanel Width="220" Margin="0,0,10,10">
                                 <TextBlock Text="COM Port" Margin="0,0,0,5" />
-                                <ComboBox ItemsSource="{Binding AvailableComPorts}"
-                                          SelectedItem="{Binding Settings.ComPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                <ComboBox ItemsSource="{Binding AvailableComPortItems}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="PortName"
+                                          SelectedValue="{Binding Settings.ComPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                           DropDownOpened="OnComPortDropDownOpened" />
                             </StackPanel>
                             <StackPanel Width="220" Margin="0,0,10,10">

@@ -55,6 +55,30 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                 ? _serialConnectionService.AvailablePorts
                 : _serialConnectionService.AvailablePorts.Concat(new[] { Settings.ComPort }).ToArray();
 
+        /// <summary>
+        /// COM ports with driver names for the dropdown (e.g. "COM4 - USB-SERIAL CH340").
+        /// The currently selected port is always included even if it is momentarily
+        /// not enumerated by the OS.
+        /// </summary>
+        public ComPortInfo[] AvailableComPortItems
+        {
+            get
+            {
+                var infos = _serialConnectionService.AvailableComPortInfos;
+                if (string.IsNullOrWhiteSpace(Settings.ComPort))
+                {
+                    return infos;
+                }
+
+                if (infos.Any(i => string.Equals(i.PortName, Settings.ComPort, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return infos;
+                }
+
+                return infos.Concat(new[] { new ComPortInfo(Settings.ComPort, string.Empty) }).ToArray();
+            }
+        }
+
         public int[] AvailableBaudRates => DefaultBaudRates;
 
         public string SerialConnectionStatus => _serialConnectionService.ConnectionStatus;
@@ -548,6 +572,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
         {
             _serialConnectionService.RefreshPorts();
             OnPropertyChanged(nameof(AvailableComPorts));
+            OnPropertyChanged(nameof(AvailableComPortItems));
         }
 
         private async void ToggleSerialConnection()
@@ -819,6 +844,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(PluginSettings.ComPort))
             {
                 OnPropertyChanged(nameof(AvailableComPorts));
+                OnPropertyChanged(nameof(AvailableComPortItems));
             }
 
             if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(PluginSettings.ApPass))
@@ -838,6 +864,12 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                 || e.PropertyName == nameof(SerialConnectionService.AvailablePorts))
             {
                 OnPropertyChanged(nameof(AvailableComPorts));
+            }
+
+            if (string.IsNullOrEmpty(e.PropertyName)
+                || e.PropertyName == nameof(SerialConnectionService.AvailableComPortInfos))
+            {
+                OnPropertyChanged(nameof(AvailableComPortItems));
             }
 
             if (string.IsNullOrEmpty(e.PropertyName)

@@ -6,9 +6,12 @@
 	<Nullable>enable</Nullable>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
-	<!-- Copy System.IO.Ports but not other dependencies -->
-	<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 	<RunPostBuildEvent>OnOutputUpdated</RunPostBuildEvent>
+
+	<!-- Single-DLL output: skip .pdb debug symbols and .deps.json dependency manifest -->
+	<DebugType>none</DebugType>
+	<DebugSymbols>false</DebugSymbols>
+	<GenerateDependencyFile>false</GenerateDependencyFile>
 
 	<!-- Assembly Info for PluginBase -->
 	<AssemblyTitle>MLAstro Robotic Polar Alignment</AssemblyTitle>
@@ -75,8 +78,10 @@
 
 
   <ItemGroup>
-    <!-- System.IO.Ports - copy main DLL but exclude runtimes folder -->
-    <PackageReference Include="System.IO.Ports" Version="8.0.0" GeneratePathProperty="False" />
+    <!-- System.IO.Ports - compile-time only; resolved from NINA app folder at runtime, not copied to output -->
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" GeneratePathProperty="False" ExcludeAssets="runtime" />
+    <!-- System.Management - compile-time only for USB device-change events; resolved from NINA at runtime -->
+    <PackageReference Include="System.Management" Version="8.0.0" GeneratePathProperty="False" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <!-- Exclude runtimes folder from ALL output directories after every build step -->
