@@ -23,10 +23,10 @@ namespace MLAstro_Robotic_Polar_Alignment
             InitializeComponent();
         }
 
-        private FrameworkElement _optionsHeader;
-        private FrameworkElement _optionsTabHost;
-        private TranslateTransform _optionsHeaderTranslate;
-        private TranslateTransform _optionsTabHostTranslate;
+        private FrameworkElement? _optionsHeader;
+        private FrameworkElement? _optionsTabHost;
+        private TranslateTransform? _optionsHeaderTranslate;
+        private TranslateTransform? _optionsTabHostTranslate;
         private double _headerTopInContent;
 
         private void OnOptionsRootLoaded(object sender, RoutedEventArgs e)
@@ -566,7 +566,7 @@ namespace MLAstro_Robotic_Polar_Alignment
             return scrollViewer.VerticalOffset + scrollViewer.ViewportHeight >= scrollViewer.ExtentHeight - 1;
         }
 
-        private static T FindDescendant<T>(DependencyObject parent) where T : DependencyObject
+        private static T? FindDescendant<T>(DependencyObject? parent) where T : DependencyObject
         {
             if (parent == null)
             {
@@ -591,7 +591,7 @@ namespace MLAstro_Robotic_Polar_Alignment
             return null;
         }
 
-        private static T FindAncestor<T>(DependencyObject child) where T : DependencyObject
+        private static T? FindAncestor<T>(DependencyObject? child) where T : DependencyObject
         {
             while (child != null)
             {
@@ -606,9 +606,9 @@ namespace MLAstro_Robotic_Polar_Alignment
             return null;
         }
 
-        private static T FindOutermostAncestor<T>(DependencyObject child) where T : DependencyObject
+        private static T? FindOutermostAncestor<T>(DependencyObject? child) where T : DependencyObject
         {
-            T result = null;
+            T? result = null;
 
             while (child != null)
             {
@@ -623,7 +623,7 @@ namespace MLAstro_Robotic_Polar_Alignment
             return result;
         }
 
-        private void RegisterPanelMouseWheelHandlers(DependencyObject parent)
+        private void RegisterPanelMouseWheelHandlers(DependencyObject? parent)
         {
             if (parent == null || parent is RichTextBox)
             {
@@ -647,7 +647,7 @@ namespace MLAstro_Robotic_Polar_Alignment
             }
         }
 
-        private static DependencyObject GetParentObject(DependencyObject child)
+        private static DependencyObject? GetParentObject(DependencyObject? child)
         {
             if (child == null)
             {
@@ -674,15 +674,15 @@ namespace MLAstro_Robotic_Polar_Alignment
 
         private sealed class TerminalSubscriptionState
         {
-            public NotifyCollectionChangedEventHandler CollectionChangedHandler { get; set; }
+            public NotifyCollectionChangedEventHandler CollectionChangedHandler { get; set; } = null!;
 
-            public PropertyChangedEventHandler EntryPropertyChangedHandler { get; set; }
+            public PropertyChangedEventHandler EntryPropertyChangedHandler { get; set; } = null!;
 
-            public ScrollChangedEventHandler ScrollChangedHandler { get; set; }
+            public ScrollChangedEventHandler ScrollChangedHandler { get; set; } = null!;
 
-            public ScrollViewer TerminalScrollViewer { get; set; }
+            public ScrollViewer? TerminalScrollViewer { get; set; }
 
-            public FlowDocument Document { get; set; }
+            public FlowDocument Document { get; set; } = null!;
 
             public Dictionary<SerialTerminalEntry, Paragraph> EntryParagraphs { get; } = new();
 

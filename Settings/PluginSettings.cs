@@ -16,7 +16,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
         private readonly PluginOptionsAccessor _optionsAccessor;
 
         // Static singleton instance
-        private static PluginSettings _instance;
+        private static PluginSettings? _instance;
         private static readonly object _instanceLock = new();
 
         /// <summary>
@@ -24,7 +24,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
         /// </summary>
         public static PluginSettings Instance
         {
-            get => _instance;
+            get => _instance!;
         }
 
         /// <summary>
@@ -40,9 +40,9 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
             }
         }
 
-        public static event EventHandler<PolarAlignmentDataSourceMode> DataSourceModeChanged;
+        public static event EventHandler<PolarAlignmentDataSourceMode>? DataSourceModeChanged;
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         [ImportingConstructor]
         public PluginSettings(IProfileService profileService)
@@ -400,7 +400,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
             return _optionsAccessor.GetValueString(propertyName, defaultValue);
         }
 
-        private void SetString(string value, [CallerMemberName] string propertyName = null)
+        private void SetString(string value, [CallerMemberName] string propertyName = null!)
         {
             _optionsAccessor.SetValueString(propertyName, value ?? string.Empty);
             OnPropertyChanged(propertyName);
@@ -411,7 +411,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
             return _optionsAccessor.GetValueInt32(propertyName, defaultValue);
         }
 
-        private void SetInt(int value, [CallerMemberName] string propertyName = null)
+        private void SetInt(int value, [CallerMemberName] string propertyName = null!)
         {
             _optionsAccessor.SetValueInt32(propertyName, value);
             OnPropertyChanged(propertyName);
@@ -423,7 +423,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
             return bool.TryParse(value, out var parsedValue) ? parsedValue : defaultValue;
         }
 
-        private void SetBool(bool value, [CallerMemberName] string propertyName = null)
+        private void SetBool(bool value, [CallerMemberName] string propertyName = null!)
         {
             _optionsAccessor.SetValueString(propertyName, value.ToString());
             OnPropertyChanged(propertyName);
@@ -437,13 +437,13 @@ namespace MLAstro_Robotic_Polar_Alignment.Settings
                 : defaultValue;
         }
 
-        private void SetDouble(double value, [CallerMemberName] string propertyName = null)
+        private void SetDouble(double value, [CallerMemberName] string propertyName = null!)
         {
             _optionsAccessor.SetValueString(propertyName, value.ToString(CultureInfo.InvariantCulture));
             OnPropertyChanged(propertyName);
         }
 
-        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null!)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }

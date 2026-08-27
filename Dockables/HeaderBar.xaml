@@ -36,6 +36,40 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Reset Error Button Style with Press Effect (shown only in ERROR state) -->
+        <Style x:Key="ResetErrorButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#B8860B"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="#8B6914"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" 
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#DAA520"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#FFD700"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#FF8C00"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#FFD700"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <!-- HEADER - Fixed at top (shared across Navigation & Config tabs) -->
@@ -46,6 +80,7 @@
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
@@ -99,6 +134,19 @@
                     ToolTip="FORCE STOP (Emergency)"
                     Command="{Binding ForceStopCommand}">
                 <TextBlock Text="FORCE&#x0a;STOP" TextAlignment="Center"/>
+            </Button>
+
+            <!-- Reset Error Button in Header (only visible when STATUS = ERROR) -->
+            <Button Grid.Column="3"
+                    Style="{StaticResource ResetErrorButtonStyle}"
+                    Width="85"
+                    Height="45"
+                    FontSize="11"
+                    Margin="8,0,0,0"
+                    ToolTip="RESET ERROR - clears driver error (sends ReEr:1)"
+                    Visibility="{Binding ResetErrorButtonVisibility}"
+                    Command="{Binding ResetErrorCommand}">
+                <TextBlock Text="RESET&#x0a;ERROR" TextAlignment="Center"/>
             </Button>
         </Grid>
     </Border>

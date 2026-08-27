@@ -54,7 +54,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         }
 
         // Static singleton instance to ensure all components use the same instance
-        private static SerialConnectionService _instance;
+        private static SerialConnectionService? _instance;
         private static readonly object _instanceLock = new();
 
         /// <summary>
@@ -72,7 +72,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                         _instance ??= new SerialConnectionService(PluginSettings.Instance);
                     }
                 }
-                return _instance;
+                return _instance!;
             }
         }
 
@@ -81,7 +81,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private bool _pauseTelemetryUpdates;
         private bool _suspendSettingsSync;
         private volatile bool _applyingTelemetrySettings;
-        private SerialPort _serialPort;
+        private SerialPort _serialPort = null!;
         private string[] _availablePorts = Array.Empty<string>();
         private ComPortInfo[] _availableComPortInfos = Array.Empty<ComPortInfo>();
         private string _connectionStatus = "Disconnected";
@@ -91,17 +91,17 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private readonly object _responseSync = new();
         private readonly SemaphoreSlim _serialOperationSemaphore = new(1, 1);
         private readonly StringBuilder _lineBuffer = new();
-        private TaskCompletionSource<bool> _pendingCommandTcs;
-        private TaskCompletionSource<bool> _anyResponseTcs;
-        private System.Timers.Timer _connectionCheckTimer;
+        private TaskCompletionSource<bool>? _pendingCommandTcs;
+        private TaskCompletionSource<bool>? _anyResponseTcs;
+        private System.Timers.Timer? _connectionCheckTimer;
         private int _connectionCheckInProgress;
         private int _portOpenInProgress;
         private int _connectionCheckFailures;
-        private ManagementEventWatcher _deviceChangeWatcher;
+        private ManagementEventWatcher? _deviceChangeWatcher;
 
-        public event PropertyChangedEventHandler PropertyChanged;
-        public event EventHandler<TelemetryDataEventArgs> TelemetryDataReceived;
-        public event EventHandler<string> CompletionReceived;
+        public event PropertyChangedEventHandler? PropertyChanged;
+        public event EventHandler<TelemetryDataEventArgs>? TelemetryDataReceived;
+        public event EventHandler<string>? CompletionReceived;
 
         [ImportingConstructor]
         public SerialConnectionService(PluginSettings settings)
@@ -391,7 +391,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         {
             try
             {
-                string portName = null;
+                string? portName = null;
                 using (var deviceParams = key.OpenSubKey("Device Parameters"))
                 {
                     portName = deviceParams?.GetValue("PortName") as string;
@@ -418,13 +418,13 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 if (portMatch)
                 {
                     var score = 2 + (friendlyPortMatch ? 2 : 0) + (isVirtual ? 0 : 1);
-                    UpdateBest(best, normalizedPort, score, friendly);
+                    UpdateBest(best, normalizedPort!, score, friendly);
                 }
 
                 if (!string.IsNullOrWhiteSpace(friendlyPort))
                 {
                     var score = 1 + (friendlyPortMatch ? 2 : 0) + (isVirtual ? 0 : 1);
-                    UpdateBest(best, friendlyPort, score, friendly);
+                    UpdateBest(best, friendlyPort!, score, friendly);
                 }
             }
             catch
@@ -443,7 +443,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             best[portName] = new PortFriendlyCandidate(score, friendly);
         }
 
-        private static string NormalizePortName(string value)
+        private static string? NormalizePortName(string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -485,7 +485,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return false;
             }
 
-            SerialPort openingPort = null;
+            SerialPort openingPort = null!;
             var cleanupAfterTimeout = false;
             try
             {
@@ -504,7 +504,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 if (await Task.WhenAny(openTask, Task.Delay(PortOpenTimeoutMilliseconds)).ConfigureAwait(false) != openTask)
                 {
                     var timedOutPort = openingPort;
-                    openingPort = null;
+                    openingPort = null!;
                     cleanupAfterTimeout = true;
                     // Release the in-progress flag immediately so the user can try another port.
                     // The abandoned openTask may still be hanging; the continuation below only cleans up.
@@ -538,7 +538,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
                 await openTask.ConfigureAwait(false);
                 _serialPort = openingPort;
-                openingPort = null;
+                openingPort = null!;
 
                 ConnectionStatus = $"Connected: {portName} @ {baudRate} (8-N-1)";
                 HandshakeStatus = string.Empty;
@@ -1180,7 +1180,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return false;
             }
 
-            TaskCompletionSource<bool> pending = null;
+            TaskCompletionSource<bool> pending = null!;
 
             await _serialOperationSemaphore.WaitAsync().ConfigureAwait(false);
             try
@@ -1232,7 +1232,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return false;
             }
 
-            TaskCompletionSource<bool> any = null;
+            TaskCompletionSource<bool> any = null!;
 
             await _serialOperationSemaphore.WaitAsync().ConfigureAwait(false);
             try
@@ -1508,7 +1508,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             finally 
             {
                 _serialPort?.Dispose();
-                _serialPort = null;
+                _serialPort = null!;
             }
         }
 
@@ -1549,12 +1549,12 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             Logger.Info("[MLAstro] SerialConnectionService disposed");
         }
 
-        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null!)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
-        private TelemetryData ParseTelemetryLine(string telemetryLine)
+        private TelemetryData? ParseTelemetryLine(string telemetryLine)
         {
             if (string.IsNullOrWhiteSpace(telemetryLine))
             {
@@ -1825,9 +1825,9 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
     public class TelemetryData
     {
-        public string Status { get; set; }
-        public string AzPosition { get; set; }
-        public string AltPosition { get; set; }
+        public string Status { get; set; } = null!;
+        public string AzPosition { get; set; } = null!;
+        public string AltPosition { get; set; } = null!;
 
         // System
         public int SpeedLevel { get; set; } = 3;
@@ -1847,8 +1847,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         // Moved positions (in degrees) - relative to alignment start
         public double AzMovedDegrees { get; set; }
         public double AltMovedDegrees { get; set; }
-        public string AzMovedPosition { get; set; }
-        public string AltMovedPosition { get; set; }
+        public string AzMovedPosition { get; set; } = null!;
+        public string AltMovedPosition { get; set; } = null!;
 
         // Steps configuration
         public double AzStepsPerDegree { get; set; } = 1.0;
@@ -1867,7 +1867,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         public int AltErrorSeconds { get; set; }
 
         // Network
-        public string StationIP { get; set; }
+        public string StationIP { get; set; } = null!;
     }
 
     public class TelemetryDataEventArgs : EventArgs
@@ -1882,13 +1882,13 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
     public class SerialTerminalEntry : INotifyPropertyChanged
     {
-        private readonly byte[] _payload;
-        private readonly string _statusText;
+        private readonly byte[]? _payload;
+        private readonly string? _statusText;
         private readonly Encoding _encoding;
         private bool _hexDisplay;
         private string _displayText;
 
-        private SerialTerminalEntry(SerialTerminalEntryType entryType, byte[] payload, string statusText, Encoding encoding, bool hexDisplay)
+        private SerialTerminalEntry(SerialTerminalEntryType entryType, byte[]? payload, string? statusText, Encoding encoding, bool hexDisplay)
         {
             EntryType = entryType;
             _payload = payload;
@@ -1898,7 +1898,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             _displayText = FormatDisplayText();
         }
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         public SerialTerminalEntryType EntryType { get; }
 
@@ -2207,7 +2207,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
     /// </summary>
     public class ComPortInfo
     {
-        public ComPortInfo(string portName, string friendlyName)
+        public ComPortInfo(string portName, string? friendlyName)
         {
             PortName = portName;
             DisplayName = BuildDisplayName(portName, friendlyName);
@@ -2216,7 +2216,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         public string PortName { get; }
         public string DisplayName { get; }
 
-        private static string BuildDisplayName(string portName, string friendlyName)
+        private static string BuildDisplayName(string portName, string? friendlyName)
         {
             if (string.IsNullOrWhiteSpace(friendlyName))
             {

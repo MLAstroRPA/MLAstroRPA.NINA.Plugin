@@ -8,7 +8,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
 {
     public partial class PolarAlignmentDockable : UserControl
     {
-        private Button _activeJogButton;
+        private Button? _activeJogButton;
 
         public PolarAlignmentDockable()
         {
@@ -59,9 +59,9 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             }
         }
 
-        private static T FindOutermostAncestor<T>(DependencyObject child) where T : DependencyObject
+        private static T? FindOutermostAncestor<T>(DependencyObject? child) where T : DependencyObject
         {
-            T result = null;
+            T? result = null;
 
             while (child != null)
             {
@@ -76,7 +76,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             return result;
         }
 
-        private static DependencyObject GetParentObject(DependencyObject child)
+        private static DependencyObject? GetParentObject(DependencyObject? child)
         {
             if (child == null)
             {

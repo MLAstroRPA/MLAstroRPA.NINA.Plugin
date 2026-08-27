@@ -48,6 +48,7 @@ To prevent equipment damage in case of software crashes or disconnected cables d
 | :--- | :--- |
 | `ESTOP:1\n` | **Emergency Stop**: Hard stop immediately (No deceleration). |
 | `STOP:1\n` | **Soft Stop**: Smoothly decelerate all motors to a halt. |
+| `ReER:1\n` | **Reset Error**: Clears the driver error state (`hasDriverError`) and returns the system to `READY`. Stops both motors. Works like the "RESET ERROR" button in the Web UI System Log. |
 | `ESTOP:0\n` / `STOP:0\n` | Ignored (Button release event). |
 
 ### Movement Commands

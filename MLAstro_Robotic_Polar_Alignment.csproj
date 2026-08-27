@@ -8,6 +8,15 @@
 	<Nullable>enable</Nullable>
 	<RunPostBuildEvent>OnOutputUpdated</RunPostBuildEvent>
 
+	<!-- Always run the post-build targets (copy DLL to NINA plugin folder + MSI staging).
+	     The .NET SDK's FastUpToDateCheck skips the whole Build target (including PostBuild)
+	     on unchanged incremental builds, so the copy-confirmation messages never appear. -->
+	<DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+
+	<!-- MSB3277: System.Text.Json 8.0 vs 9.0 conflict comes from the third-party NINA.PlateSolving.dll
+	     (it references System.Text.Json 9.0; net8.0 provides 8.0). Benign at runtime - unified to 8.0. -->
+	<NoWarn>$(NoWarn);MSB3277</NoWarn>
+
 	<!-- Single-DLL output: skip .pdb debug symbols and .deps.json dependency manifest -->
 	<DebugType>none</DebugType>
 	<DebugSymbols>false</DebugSymbols>
@@ -167,8 +176,12 @@
 		<PropertyGroup>
 			<PluginTargetDir>$(LOCALAPPDATA)\NINA\Plugins\3.0.0\MLAstro_Robotic_Polar_Alignment</PluginTargetDir>
 		</PropertyGroup>
-		<!-- Stop NINA if running -->
-		<Exec Command="taskkill /f /im NINA.exe" ContinueOnError="true" IgnoreExitCode="true" />
+		<!-- Stop NINA if running (2>nul suppresses the benign "process not found" stderr warning) -->
+		<Exec Command="taskkill /f /im NINA.exe 2>nul" ContinueOnError="true" IgnoreExitCode="true" />
+		<!-- Wait for NINA to fully exit so the plugin DLL handle is released before copying.
+		     Without this, the Copy task hits MSB3026 "file is being used by another process"
+		     retry warning when NINA was just running. No delay when NINA is already closed. -->
+		<Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;for ($i=0; $i -lt 50; $i++) { if (-not (Get-Process -Name NINA -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 200 }&quot;" ContinueOnError="true" IgnoreExitCode="true" />
 		<!-- Create target directory if not exists -->
 		<MakeDir Directories="$(PluginTargetDir)" Condition="!Exists('$(PluginTargetDir)')" />
 		<!-- Copy files -->
@@ -178,6 +191,7 @@
 		<Copy SourceFiles="@(PluginFiles)" DestinationFolder="$(PluginTargetDir)\%(RecursiveDir)" />
 		<!-- Remove runtimes folder from target if it exists -->
 		<RemoveDir Directories="$(PluginTargetDir)\runtimes" Condition="Exists('$(PluginTargetDir)\runtimes')" />
+		<Message Importance="High" Text="[MLAstro] Plugin copied to NINA folder: $(PluginTargetDir)" />
 	</Target>
 
 	<!-- Keep the MSI/GitHub-release staging copy of the plugin DLL fresh on every Release build -->
@@ -187,7 +201,7 @@
 		</PropertyGroup>
 		<MakeDir Directories="$(StagedPluginDir)" Condition="!Exists('$(StagedPluginDir)')" />
 		<Copy SourceFiles="$(TargetDir)MLAstro_Robotic_Polar_Alignment.dll" DestinationFolder="$(StagedPluginDir)" />
-		<Message Importance="High" Text="[MLAstro] Copied plugin DLL to $(StagedPluginDir)" />
+		<Message Importance="High" Text="[MLAstro] Plugin DLL copied to MSI staging: $(StagedPluginDir)" />
 	</Target>
 
 </Project>

@@ -19,18 +19,18 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
     { 
         private readonly PluginSettings _settings;
         private readonly SerialConnectionService _serialService;
-        private System.Timers.Timer _jogWatchdogTimer;
-        private string _currentJogCommand = null;
+        private System.Timers.Timer? _jogWatchdogTimer;
+        private string? _currentJogCommand = null;
         private bool _disposed = false;
 
         // Static instance for cleanup during plugin teardown
-        private static PolarAlignmentDockVM _instance;
+        private static PolarAlignmentDockVM? _instance;
         private static readonly object _instanceLock = new();
 
         /// <summary>
         /// Gets the current instance of PolarAlignmentDockVM for cleanup purposes.
         /// </summary>
-        public static PolarAlignmentDockVM Instance => _instance;
+        public static PolarAlignmentDockVM Instance => _instance!;
 
         // Header Properties
         private string _firmwareVersion = "unknown";
@@ -112,10 +112,19 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                     OnPropertyChanged(nameof(CanManualControl));
                     OnPropertyChanged(nameof(CanAutomaticControl));
                     OnPropertyChanged(nameof(CanAlign));
+                    OnPropertyChanged(nameof(ResetErrorButtonVisibility));
                     CommandManager.InvalidateRequerySuggested();
                 }
             }
         }
+
+        /// <summary>
+        /// Visibility of the RESET ERROR button: only visible when the system status is ERROR.
+        /// </summary>
+        public Visibility ResetErrorButtonVisibility =>
+            SystemStatus.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
         public Brush StatusForeground
         {
@@ -511,6 +520,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         public ICommand MoveRightCommand { get; }
         public ICommand StopCommand { get; }
         public ICommand ForceStopCommand { get; }
+        public ICommand ResetErrorCommand { get; }
 
         // Home Commands
         public ICommand SetHomeCommand { get; }
@@ -547,6 +557,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             Logger.Info($"[MLAstro] Using singleton SerialConnectionService (injected: {serialService.GetHashCode()}, singleton: {_serialService.GetHashCode()})");
 
             // Initialize Commands
+#pragma warning disable CS0618 // NINA.RelayCommand is obsolete, but intentionally kept: it hooks CommandManager.RequerySuggested
             SetSpeedCommand = new RelayCommand(OnSetSpeed);
 
             IncRelativeDegreesCommand = new RelayCommand(_ => RelativeDegrees++);
@@ -563,6 +574,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             MoveRightCommand = new RelayCommand(_ => { });
             StopCommand = new RelayCommand(_ => StopAllMovement());
             ForceStopCommand = new RelayCommand(_ => SendCommand("ESTOP:1\n"));
+            ResetErrorCommand = new RelayCommand(_ => SendCommand("ReER:1\n"));
 
             SetHomeCommand = new RelayCommand(_ => SendCommand("SetH:1\n"));
             ReturnHomeCommand = new RelayCommand(_ => SendCommand("RetH:1\n"));
@@ -572,6 +584,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             AlignAltCommand = new RelayCommand(_ => OnAlignAlt(), _ => CanAlign);
             AlignAllCommand = new RelayCommand(_ => OnAlignAll(), _ => CanAlign);
             ToggleModifyCommand = new RelayCommand(_ => OnToggleModify(), _ => CanModify);
+#pragma warning restore CS0618
 
             // Subscribe to serial service events (using singleton)
             _serialService.PropertyChanged += OnSerialServicePropertyChanged;
@@ -583,7 +596,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             Logger.Info($"[MLAstro] ViewModel subscribed to SerialConnectionService singleton (instance: {_serialService.GetHashCode()})");
         }
 
-        private void OnTelemetryDataReceived(object sender, TelemetryDataEventArgs e)
+        private void OnTelemetryDataReceived(object? sender, TelemetryDataEventArgs e)
         {
             if (e?.Data == null)
             {
@@ -700,7 +713,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             }
         }
 
-        private void OnCompletionReceived(object sender, string completionType)
+        private void OnCompletionReceived(object? sender, string completionType)
         {
             switch (completionType)
             {
@@ -720,7 +733,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             }
         }
 
-        private void OnSerialServicePropertyChanged(object sender, PropertyChangedEventArgs e)
+        private void OnSerialServicePropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(SerialConnectionService.IsConnected))
             {

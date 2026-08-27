@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  MLAstro Robotic Polar Alignment - N.I.N.A Plugin
+  WiX v6 Installer Package
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <!-- Define variables -->
+  <?define ProductName = "MLAstro Robotic Polar Alignment" ?>
+  <?define ProductVersion = "2.0.0.4" ?>
+  <?define Manufacturer = "MLAstro" ?>
+  <?define UpgradeCode = "8F3D9A2B-1C4E-4D5F-A6B7-8C9D0E1F2A3B" ?>
+  <?define PluginFolderName = "MLAstro_Robotic_Polar_Alignment" ?>
+  <?define TPPAFolderName = "Three Point Polar Alignment" ?>
+  <?define NINAVersion = "3.0.0" ?>
+
+  <!-- Package definition -->
+  <Package Name="$(var.ProductName)"
+           Manufacturer="$(var.Manufacturer)"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="$(var.UpgradeCode)"
+           Scope="perUser"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <SummaryInformation Description="$(var.ProductName) plugin for N.I.N.A. astrophotography software" />
+
+    <!-- Upgrade handling - remove older versions -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  AllowSameVersionUpgrades="yes" />
+
+    <!-- Embed CAB for single MSI file -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- ========== CHECK IF NINA IS INSTALLED ========== -->
+
+    <!-- NOTE: NINA presence is determined ONLY by the NINA.exe file. Do NOT use the
+         %LocalAppData%\NINA\Plugins folder as evidence - it is left behind after
+         NINA is uninstalled and would let the plugin install on a NINA-less machine. -->
+
+    <!-- Check for NINA.exe in Program Files (default N.I.N.A. install folder includes the full product name) -->
+    <Property Id="NINAEXE_PROGRAMFILES">
+      <DirectorySearch Id="NINAProgramFilesSearch" Path="[ProgramFiles64Folder]N.I.N.A. - Nighttime Imaging 'N' Astronomy">
+        <FileSearch Name="NINA.exe" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Fallback: NINA.exe in Program Files under the short folder name -->
+    <Property Id="NINAEXE_PROGRAMFILES_SHORT">
+      <DirectorySearch Id="NINAProgramFilesShortSearch" Path="[ProgramFiles64Folder]N.I.N.A">
+        <FileSearch Name="NINA.exe" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Fallback: NINA.exe in the per-user Squirrel install folder -->
+    <Property Id="NINAEXE_LOCALAPPDATA">
+      <DirectorySearch Id="NINALocalAppDataSearch" Path="[LocalAppDataFolder]Programs\N.I.N.A">
+        <FileSearch Name="NINA.exe" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Set to 1 when the user clicks "Continue" in the N.I.N.A.-missing dialog to install anyway -->
+    <Property Id="SKIPNINACHECK" Value="0" />
+
+    <!-- Launch condition: NINA must be installed (unless the user chose Continue) -->
+    <Launch Condition="NINAEXE_PROGRAMFILES OR NINAEXE_PROGRAMFILES_SHORT OR NINAEXE_LOCALAPPDATA OR Installed OR SKIPNINACHECK"
+            Message="N.I.N.A. (Nighttime Imaging 'N' Astronomy) version 3.0 or later is required to install this plugin.&#13;&#10;&#13;&#10;Please download N.I.N.A. from:&#13;&#10;https://nighttime-imaging.eu/download/&#13;&#10;&#13;&#10;After installing N.I.N.A., run this installer again." />
+
+    <!-- ========== CHECK IF NINA IS RUNNING ========== -->
+
+    <!-- Warn and prompt user to close NINA before installation -->
+    <!-- CloseApplication will detect if NINA is running and prompt user -->
+    <util:CloseApplication Id="CloseNINAPrompt"
+                           Target="NINA.exe"
+                           RebootPrompt="no"
+                           CloseMessage="no"
+                           PromptToContinue="yes"
+                           Description="N.I.N.A. is currently running and must be closed before installation can continue.&#13;&#10;&#13;&#10;Please save your work and close N.I.N.A., then click 'Retry' to continue installation.&#13;&#10;&#13;&#10;Click 'Ignore' to attempt to close N.I.N.A. automatically (not recommended if imaging session is active)." />
+
+    <!-- Open the N.I.N.A. download page in the default browser (ShellExecute via the WixShellExec custom action) -->
+    <Property Id="WixShellExecTarget" Value="https://nighttime-imaging.eu/download/" />
+    <CustomAction Id="LaunchNinaDownload" BinaryRef="Wix4UtilCA_X64" DllEntry="WixShellExec" Impersonate="yes" Return="ignore" />
+
+    <!-- Installation features - both enabled (checked) by default -->
+    <Feature Id="MainPluginFeature" Title="$(var.ProductName)" Description="Main MLAstro RPA controller plugin (control panel, serial connection, configuration)." Level="1">
+      <ComponentGroupRef Id="PluginFiles" />
+      <ComponentRef Id="CreatePluginFolder" />
+    </Feature>
+    <Feature Id="TppaPluginFeature" Title="Three Point Polar Alignment (mod)" Description="TPPA mod plugin that drives the MLAstroRPA hardware automatically via serial." Level="1">
+      <ComponentGroupRef Id="TPPAFiles" />
+      <ComponentRef Id="CreateTPPAFolder" />
+    </Feature>
+
+    <!-- Default component selection (both plugins checked by default in the Setup dialog).
+         ADDLOCAL is set on the Setup dialog's Continue button according to the checkboxes.
+         Not authored with a default here (ICE87) - MSI installs all Level-1 features by default,
+         and a /qn silent install also gets both plugins. -->
+    <Property Id="INSTALL_MAIN" Value="1" />
+    <Property Id="INSTALL_TPPA" Value="1" />
+
+    <!-- WixUI_Minimal: standard Welcome/License/Verify/Progress/Exit flow.
+         Component selection + destination folder are handled by our custom Setup dialog
+         (shown before the wizard), so no separate feature/install-dir pages are needed. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+    <!-- Custom completion message -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" 
+              Value="Installation complete!&#13;&#10;&#13;&#10;Start N.I.N.A. to use the MLAstro Robotic Polar Alignment plugin.&#13;&#10;The plugin control panel will appear in the 'Docking' menu." />
+
+    <!-- Custom dialog shown when N.I.N.A. is not installed - has a Download button that opens the N.I.N.A. page -->
+    <UI Id="NinaCheckUI">
+      <Dialog Id="NinaMissingDlg" Width="370" Height="200" Title="N.I.N.A. not found">
+        <Control Id="Title" Type="Text" X="15" Y="15" Width="340" Height="20" TabSkip="yes" Text="{\WixUI_Font_Title}N.I.N.A. is required" />
+        <Control Id="Description" Type="Text" X="15" Y="45" Width="340" Height="60" TabSkip="yes" Text="MLAstro Robotic Polar Alignment requires N.I.N.A. version 3.0 or later.&#10;&#10;Click the button below to open the N.I.N.A. download page, then run this installer again." />
+        <Control Id="DownloadButton" Type="PushButton" X="15" Y="115" Width="180" Height="22" Text="Download N.I.N.A.">
+          <Publish Event="DoAction" Value="LaunchNinaDownload" Condition="1" />
+        </Control>
+        <Control Id="UrlText" Type="Text" X="15" Y="142" Width="340" Height="17" TabSkip="yes" Text="https://nighttime-imaging.eu/download/" />
+        <Control Id="Continue" Type="PushButton" X="200" Y="173" Width="90" Height="17" Text="Continue">
+          <Publish Property="SKIPNINACHECK" Value="1" Order="1" Condition="1" />
+          <Publish Event="EndDialog" Value="Return" Order="2" Condition="1" />
+        </Control>
+        <Control Id="Exit" Type="PushButton" X="300" Y="173" Width="56" Height="17" Default="yes" Text="Exit">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+    </UI>
+
+    <!-- Custom setup dialog: choose plugins (checkboxes) AND the destination folder, on one page -->
+    <UI Id="SetupUI">
+      <DialogRef Id="BrowseDlg" />
+      <Dialog Id="SetupDlg" Width="370" Height="300" Title="Setup Options">
+        <Control Id="Title" Type="Text" X="15" Y="15" Width="340" Height="20" TabSkip="yes" Text="{\WixUI_Font_Title}Select components and destination" />
+        <Control Id="Description" Type="Text" X="15" Y="45" Width="340" Height="35" TabSkip="yes" Text="Choose which components to install and where to put them, then click Continue." />
+        <Control Id="MainCheck" Type="CheckBox" X="20" Y="92" Width="330" Height="18" Property="INSTALL_MAIN" CheckBoxValue="1" Text="MLAstro Robotic Polar Alignment" />
+        <Control Id="TppaCheck" Type="CheckBox" X="20" Y="114" Width="330" Height="18" Property="INSTALL_TPPA" CheckBoxValue="1" Text="Three Point Polar Alignment (mod)" />
+        <Control Id="FolderLabel" Type="Text" X="15" Y="155" Width="90" Height="17" TabSkip="yes" Text="Destination:" />
+        <Control Id="FolderPath" Type="Text" X="90" Y="155" Width="195" Height="17" TabSkip="yes" Text="[INSTALLDIR]" />
+        <Control Id="FolderBrowse" Type="PushButton" X="295" Y="153" Width="60" Height="20" Text="Browse...">
+          <Publish Property="_BrowseProperty" Value="INSTALLDIR" Order="1" Condition="1" />
+          <Publish Event="SpawnDialog" Value="BrowseDlg" Order="2" Condition="1" />
+        </Control>
+        <Control Id="Continue" Type="PushButton" X="205" Y="270" Width="75" Height="21" Default="yes" Text="Continue">
+          <Publish Property="ADDLOCAL" Value="MainPluginFeature,TppaPluginFeature" Order="1" Condition="INSTALL_MAIN = &quot;1&quot; AND INSTALL_TPPA = &quot;1&quot;" />
+          <Publish Property="ADDLOCAL" Value="MainPluginFeature" Order="2" Condition="INSTALL_MAIN = &quot;1&quot; AND INSTALL_TPPA &lt;&gt; &quot;1&quot;" />
+          <Publish Property="ADDLOCAL" Value="TppaPluginFeature" Order="3" Condition="INSTALL_MAIN &lt;&gt; &quot;1&quot; AND INSTALL_TPPA = &quot;1&quot;" />
+          <Publish Property="ADDLOCAL" Value="__NONE__" Order="4" Condition="INSTALL_MAIN &lt;&gt; &quot;1&quot; AND INSTALL_TPPA &lt;&gt; &quot;1&quot;" />
+          <Publish Event="EndDialog" Value="Return" Order="5" Condition="1" />
+        </Control>
+        <Control Id="Exit" Type="PushButton" X="290" Y="270" Width="66" Height="21" Text="Exit">
+          <Publish Event="EndDialog" Value="Exit" Order="1" Condition="1" />
+        </Control>
+      </Dialog>
+    </UI>
+
+    <!-- Wire the folder browser OK button to set the chosen destination -->
+    <UI>
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="1" Condition="1" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="2" Condition="1" />
+    </UI>
+
+    <!-- Show the N.I.N.A.-missing warning and the setup dialog before the wizard (fresh install).
+         IMPORTANT: SetupDlg MUST be shown AFTER CostFinalize so that directory paths
+         (INSTALLDIR) are resolved. Showing it earlier (e.g. right after AppSearch) makes
+         the folder browse / disk-space tracking fail with MSI error 2343 'Specified path is empty'.
+         WixUI_Minimal's own first dialog (WelcomeEulaDlg) is sequenced at 1297, so our
+         SetupDlg (right after CostFinalize = 1000) appears before the standard wizard. -->
+    <InstallUISequence>
+      <Show Dialog="NinaMissingDlg" After="AppSearch" Condition="NOT Installed AND NOT (NINAEXE_PROGRAMFILES OR NINAEXE_PROGRAMFILES_SHORT OR NINAEXE_LOCALAPPDATA)" />
+      <Show Dialog="SetupDlg" After="CostFinalize" Condition="NOT Installed" />
+    </InstallUISequence>
+
+  </Package>
+
+  <!-- Directory structure: LocalAppData\NINA\Plugins\3.0.0\PluginName -->
+  <Fragment>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="NINADir" Name="NINA">
+        <Directory Id="PluginsDir" Name="Plugins">
+          <Directory Id="INSTALLDIR" Name="$(var.NINAVersion)">
+            <Directory Id="INSTALLFOLDER" Name="$(var.PluginFolderName)" />
+            <Directory Id="TPPAFOLDER" Name="$(var.TPPAFolderName)" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- Component to create and remove the plugin folder -->
+  <Fragment>
+    <Component Id="CreatePluginFolder" Directory="INSTALLFOLDER" Guid="F6A7B8C9-D0E1-2345-F012-456789ABCDEF">
+      <CreateFolder />
+      <RemoveFolder Id="RemovePluginFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      <RemoveFolder Id="RemoveVersionDir" Directory="INSTALLDIR" On="uninstall" />
+      <RegistryValue Root="HKCU" 
+                     Key="Software\MLAstro\RPA" 
+                     Name="Installed" 
+                     Type="integer" 
+                     Value="1" 
+                     KeyPath="yes" />
+      <RegistryValue Root="HKCU" 
+                     Key="Software\MLAstro\RPA" 
+                     Name="InstallPath" 
+                     Type="string" 
+                     Value="[INSTALLFOLDER]" />
+    </Component>
+  </Fragment>
+
+  <!-- Component to create and remove the TPPA mod plugin folder -->
+  <Fragment>
+    <Component Id="CreateTPPAFolder" Directory="TPPAFOLDER" Guid="7E9F0A3B-2C5D-4E6F-8A9B-0C1D2E3F4A5B">
+      <CreateFolder />
+      <RemoveFolder Id="RemoveTPPAFolder" Directory="TPPAFOLDER" On="uninstall" />
+      <RemoveFolder Id="RemoveVersionDirTPPA" Directory="INSTALLDIR" On="uninstall" />
+      <RegistryValue Root="HKCU" 
+                     Key="Software\MLAstro\RPA\Components" 
+                     Name="TPPAInstalled" 
+                     Type="integer" 
+                     Value="1" 
+                     KeyPath="yes" />
+    </Component>
+  </Fragment>
+
+  <!-- Plugin files component group - only essential files -->
+  <Fragment>
+    <ComponentGroup Id="PluginFiles" Directory="INSTALLFOLDER">
+
+      <!-- Main Plugin DLL -->
+      <Component Id="MainPluginDLL" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <File Id="PluginDLL" 
+              Source="$(var.ProjectDir)Plugin\MLAstro_Robotic_Polar_Alignment\MLAstro_Robotic_Polar_Alignment.dll" />
+        <RegistryValue Root="HKCU" Key="Software\MLAstro\RPA\Components" 
+                       Name="MainDLL" Type="string" Value="[INSTALLFOLDER]MLAstro_Robotic_Polar_Alignment.dll" 
+                       KeyPath="yes" />
+      </Component>
+
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- TPPA mod plugin files component group (installed into its own folder) -->
+  <Fragment>
+    <ComponentGroup Id="TPPAFiles" Directory="TPPAFOLDER">
+      <Component Id="TPPAPluginDLL" Guid="D1E2F3A4-B5C6-4D7E-8F90-A1B2C3D4E5F6">
+        <File Id="TPPAPluginDLL"
+              Source="$(var.ProjectDir)Plugin\Three Point Polar Alignment\NINA.Plugins.PolarAlignment.dll" />
+        <RegistryValue Root="HKCU" Key="Software\MLAstro\RPA\Components" 
+                       Name="TPPADLL" Type="string" Value="[TPPAFOLDER]NINA.Plugins.PolarAlignment.dll" 
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

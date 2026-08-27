@@ -26,16 +26,16 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
 
         private readonly SerialConnectionService _serialConnectionService;
         private readonly PolarAlignmentDockVM _polarAlignmentDockVM;
-        private ResourceDictionary _pluginResourceDictionary;
-        private FileSystemWatcher _pluginFolderWatcher;
+        private ResourceDictionary? _pluginResourceDictionary;
+        private FileSystemWatcher? _pluginFolderWatcher;
         private bool _disposed = false;
         private bool _isHexInputEnabled;
-        private string _serialTerminalInput;
+        private string _serialTerminalInput = string.Empty;
         private bool _isModifyMode;
         private bool _hasUserSettingsEdits;
         private string _autoReconnectStatus = string.Empty;
         private bool _isHandshakeSuccessful;
-        private string _savedSettingsSnapshot;
+        private string? _savedSettingsSnapshot;
         private bool _showApPassword;
         private bool _showStaPassword;
         private bool _apPasswordEdited;
@@ -47,7 +47,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
 
         public PolarAlignmentDataSourceMode[] AvailableDataSourceModes { get; } = Enum.GetValues<PolarAlignmentDataSourceMode>();
 
-        public event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         public string[] AvailableComPorts => string.IsNullOrWhiteSpace(Settings.ComPort)
             ? _serialConnectionService.AvailablePorts
@@ -825,7 +825,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
         }
 
-        private void OnSettingsPropertyChanged(object sender, PropertyChangedEventArgs e)
+        private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             // Detect user edits (not telemetry-driven) while connected and pause telemetry settings
             // sync so polling does not overwrite values the user is typing before Apply.
@@ -858,7 +858,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
         }
 
-        private void OnSerialConnectionServicePropertyChanged(object sender, PropertyChangedEventArgs e)
+        private void OnSerialConnectionServicePropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (string.IsNullOrEmpty(e.PropertyName)
                 || e.PropertyName == nameof(SerialConnectionService.AvailablePorts))
@@ -953,7 +953,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
             }
         }
 
-        private void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        private void OnPropertyChanged([CallerMemberName] string propertyName = null!)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
@@ -1087,11 +1087,15 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
                 _execute = execute;
             }
 
-            public bool CanExecute(object parameter) => true;
+            public bool CanExecute(object? parameter) => true;
 
-            public event EventHandler CanExecuteChanged;
+            public event EventHandler? CanExecuteChanged
+            {
+                add => CommandManager.RequerySuggested += value;
+                remove => CommandManager.RequerySuggested -= value;
+            }
 
-            public void Execute(object parameter) => _execute();
+            public void Execute(object? parameter) => _execute();
         }
 
     }

@@ -1,0 +1,44 @@
+{
+	"name": "mlastro-build-button",
+	"displayName": ".NET build project",
+	"description": "Adds a BUILD button to the status bar that runs the 'dotnet: build' task.",
+	"version": "0.0.4",
+	"publisher": "mlastro",
+	"engines": {
+		"vscode": "^1.70.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "mlastro.buildButton.runBuild",
+				"title": "MLAstro: Run Build Task"
+			},
+			{
+				"command": "mlastro.buildButton.reload",
+				"title": "MLAstro: Reload Window (apply extension update)"
+			}
+		],
+		"configuration": {
+			"title": "MLAstro Build Button",
+			"properties": {
+				"mlastroBuildButton.task": {
+					"type": "string",
+					"default": "dotnet: build",
+					"description": "Default task label to run when clicking the BUILD button. If it is not found (or is ambiguous across folders), a task picker is shown."
+				},
+				"mlastroBuildButton.workspaceFolder": {
+					"type": "string",
+					"default": "",
+					"description": "Optional workspace folder name to restrict the task search to. Leave empty to search all open folders."
+				}
+			}
+		}
+	}
+}

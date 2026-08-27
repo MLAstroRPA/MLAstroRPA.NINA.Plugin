@@ -21,6 +21,7 @@ This plugin allows you to:
 4. [User Guide](#user-guide)
    - [Serial Connection](#serial-connection)
    - [Control Panel](#control-panel)
+   - [End-to-End Workflow](#end-to-end-workflow)
    - [Polar Alignment Workflow](#polar-alignment-workflow)
    - [Configuration Options](#configuration-options)
 5. [Troubleshooting](#troubleshooting)
@@ -45,34 +46,34 @@ This plugin allows you to:
 
 ## Installation Guide
 
-### Step 1: Download the Plugin
-
-1. Download the latest release of `MLAstro_Robotic_Polar_Alignment.dll` from the [GitHub Releases](https://github.com/MLAstroRPA/MLAstroRPA.NINA.Plugin/releases) page.
-
-### Step 2: Install the Plugin
-
 **Method A: Manual Installation**
-1. Close N.I.N.A
-2. Locate your N.I.N.A plugins folder:
+1. Download the latest release of `MLAstro_Robotic_Polar_Alignment.dll` from the [GitHub Releases](https://github.com/MLAstroRPA/MLAstroRPA.NINA.Plugin/releases) page.
+2. Close N.I.N.A
+3. Locate your N.I.N.A plugins folder:
    - Default path: `%LOCALAPPDATA%\NINA\Plugins\3.0.0\`
    - Or: `C:\Users\<YourUsername>\AppData\Local\NINA\Plugins\3.0.0\`
-3. Create a new folder named `MLAstro_Robotic_Polar_Alignment` and `Three Point Polar Alignment`
-4. Copy the downloaded `.dll` file into each folder
-5. Restart N.I.N.A
+4. Create a new folder named `MLAstro_Robotic_Polar_Alignment` and `Three Point Polar Alignment`
+5. Copy the downloaded `.dll` file into each folder
+6. Restart N.I.N.A
 
-**Method B: Via N.I.N.A Plugin Manager**
-1. Open N.I.N.A
-2. Go to **Options** → **Plugins**
-3. Search for "MLAstro Robotic Polar Alignment"
-4. Click **Install**
-5. Restart N.I.N.A when prompted
+**Method B: MSI Installer (Recommended)**
 
-### Step 3: Verify Installation
+Download the `MLAstro_RPA_Plugin_<version>.msi` installer attached to the [GitHub Releases](https://github.com/MLAstroRPA/MLAstroRPA.NINA.Plugin/releases) page, then:
+
+1. Close N.I.N.A — the installer detects it and prompts you to close it if it is still running
+2. Double-click the `.msi` file to launch the installer
+3. The wizard verifies that N.I.N.A **3.0 or later** is installed, then installs the plugin
+4. Click **Install** — the package installs **per-user**, no administrator rights are needed
+5. Start N.I.N.A — the plugin is loaded automatically
+
+> **Upgrading?** The installer detects an older version and upgrades it automatically. To uninstall, use **Windows Settings → Apps**.
+
+### Verify Installation
 
 1. Open N.I.N.A
 2. Go to **Options** → **Plugins**
 3. Confirm "MLAstro Robotic Polar Alignment" appears in the list and is enabled
-4. The plugin control panel should now be available in the **Imaging** tab
+4. The plugin control panel should now be available in the **Plugin** tab 
 
 ---
 
@@ -141,7 +142,7 @@ The Serial Terminal displays all communication between the plugin and the contro
 
 ### Control Panel
 
-The main control panel is accessible from the **Imaging** tab in N.I.N.A.
+The main control panel and its settings will appear after a successful connection to the hardware.
 
 #### Status Display
 
@@ -167,11 +168,11 @@ Click the speed buttons to change the movement speed.
 
 **Jog Mode (Continuous)**
 - Press and hold direction buttons to move continuously
-- Release to stop
+- Release to perform a soft stop
 - Includes safety watchdog (auto-stop after 500ms without command)
 
 **Relative Mode (Angle)**
-- Set specific degrees/minutes/seconds values
+- Set specific degrees/minutes/seconds values in the "Relative Move" section
 - Click direction to move exact amount
 - Toggle between modes using the **Jog/Relative** switch
 
@@ -193,8 +194,73 @@ Click the speed buttons to change the movement speed.
 
 | Button | Function |
 |--------|----------|
-| **STOP** | Smooth deceleration stop |
-| **E-STOP** | Immediate hard stop (emergency) |
+| **STOP** | Smooth deceleration stop (Soft Stop) |
+| **E-STOP** | Immediate hard stop (Forced Stop) |
+
+---
+
+### End-to-End Workflow
+
+The plugin options window (**Options → Equipment → MLAstro Robotic Polar Alignment**) is organized into three tabs, plus a shared header with **Status**, **Connection** and **FORCE STOP**:
+
+- **CONTROL** — manual movement, position/home and polar alignment.
+- **CONNECTION** — serial port setup, handshake and the serial terminal.
+- **CONFIGURATION** — limits, motor driver, backlash, WiFi and save actions.
+
+A typical session on the PC follows **CONNECT → MAN → SEMI AUTO → AUTO → SAFETY → CONFIG & SAVE**:
+
+#### Phase 1 — CONNECT (CONNECTION tab)
+
+Plug the controller into the PC via USB, pick its COM port (**Refresh Ports**, default **115200 / 8-N-1**) and click **Connect**. Wait until **Handshake** reads **"OK!"** — **"Handshake: NO ANSWER"** means the controller is not responding (check power, cable and baud rate). The **CONTROL** and **CONFIGURATION** tabs unlock only after a successful handshake. See [Serial Connection](#serial-connection) for full details (Reset ESP32, Auto-reconnect, Serial Terminal, Hex input).
+
+#### Phase 2 — MAN — Manual movement (CONTROL tab)
+
+Use the **🕹️ Manual Movement** section to move the mount by hand: **Speed Level (1–5)**, **Jog (Hold)** vs **Relative (Step)**, the directional pad (▲/▼ Alt, ◄/► Az, ⏹ STOP) and the home buttons (**🏠 SET HOME HERE / ↻ RETURN TO HOME / ⚠️ RESET HOME**). In an emergency press **FORCE STOP** in the header. See [Control Panel](#control-panel) for full details.
+
+#### Phase 3 — SEMI AUTO — Polar alignment (CONTROL tab)
+
+The semi-automatic flow still requires you to read and enter the errors by hand:
+
+1. Run **N.I.N.A's Three Point Polar Alignment (TPPA)** to measure the current Azimuth/Altitude error.
+2. Enter the reported **Alt Error** and **Az Error** (Deg / Min / Sec) and their direction (Up/Down, Left/Right).
+3. Click **Align Alt**, **Align Az** or **✓ ALIGN ALL** to apply the correction.
+4. Re-run TPPA to verify; repeat until the error is acceptable (typically 2–3 iterations).
+
+#### Phase 4 — AUTO — Fully automatic polar alignment (TPPA mod plugin)
+
+The hardware supports **fully automatic** polar alignment over Serial. The **Three Point Polar Alignment (TPPA) mod plugin** is bundled with this plugin's Release and drives the mount on its own — no manual error entry required:
+
+1. **Install** the bundled `Three Point Polar Alignment` (mod) plugin from the same Release.
+2. **Disconnect** the serial port in **this** plugin (CONNECTION tab → **Disconnect**) — both plugins must not share the same COM port.
+3. Open the TPPA mod plugin options: select **`MLAstroRPA`** as the **Polar Alignment System** and tick **Do automated adjustments**.
+4. Run the standard **3-point TPPA** imaging sequence. After the initial solve, TPPA connects to the MLAstroRPA hardware over serial and automatically sends the correction nudges until the polar error is within tolerance.
+
+> ⚠️ The TPPA mod plugin needs the serial port; keeping this plugin connected will cause a port conflict.
+
+#### Phase 5 — SAFETY — Limits & monitoring (CONFIGURATION tab)
+
+Set **Soft Limits** for AZ and ALT before moving — the controller refuses moves outside this range. On a hard/soft-limit trip, stop with **STOP** / **FORCE STOP**, fix the cause and clear the error before resuming. Keep the jog **safety watchdog** (~500 ms auto-stop) and the firmware **communication watchdog** (E-STOP on lost heartbeat) enabled.
+
+#### Phase 6 — CONFIG & SAVE (CONFIGURATION tab)
+
+Tune **Motor Driver (TMC2209)**, **Anti Backlash / Alt P.A Overshoot** and **WiFi** settings, then commit with **💾 Configuration Management**:
+
+| Button | What it does |
+|---|---|
+| **⚡ APPLY SETTINGS** | Send to device memory only — not persisted (lost on reboot). |
+| **✓ SAVE ALL & REBOOT** | Persist everything to FRAM and reboot. Use this to keep changes. |
+| **⏻ REBOOT** | Reboot the controller without saving. |
+
+See [Configuration Options](#configuration-options) for the full parameter reference.
+
+#### Typical session (quick recap)
+
+1. **CONNECT** (CONNECTION tab) → handshake **"OK!"**.
+2. Check **Soft Limits** and **Motor Driver** settings (CONFIGURATION tab), then **APPLY** or **SAVE ALL & REBOOT**.
+3. **MAN** (CONTROL tab) — move to the target and **SET HOME HERE**.
+4. **SEMI AUTO** (enter TPPA errors) or **AUTO** (TPPA mod plugin) — apply the alignment correction.
+5. Verify with TPPA until the error is small enough.
+6. **✓ SAVE ALL & REBOOT** to persist.
 
 ---
 
@@ -270,7 +336,7 @@ Configure stepper motor parameters for each axis:
 | **Run Current (mA)** | Motor current during movement | 400-2000 |
 | **Hold Current (mA)** | Motor current when stationary | 100-500 |
 | **Start-up Booster (%)** | Extra torque at movement start | 0-100 |
-| **Soft CoolStep (%)** | Dynamic current reduction | 0-100 |
+| **Soft CoolStep (%)** | Dynamic current reduction factor | 0-100 |
 | **Microsteps** | Microstepping resolution | 1-256 |
 | **Accel (steps/s²)** | Acceleration rate | 1000-50000 |
 | **Decel (steps/s²)** | Deceleration rate | 1000-50000 |
@@ -278,10 +344,12 @@ Configure stepper motor parameters for each axis:
 | **Mode** | StealthChop (quiet) / SpreadCycle (torque) | - |
 
 #### Anti Backlash
-
-- **Enable**: Turn on hardware backlash compensation
+- **Enable**: Turn on software backlash compensation
 - **AZ Backlash (steps)**: Azimuth backlash value
 - **ALT Backlash (steps)**: Altitude backlash value
+- **Enable Overshoot**: Use a two-leg move for Altitude alignment to approach the target from a consistent direction, minimizing gear slack effects.
+- **Overshoot Angle**: The extra distance to travel past the target before returning.
+- **Overshoot Up/Down**: Choose whether to apply the overshoot routine when moving Up, Down, or both.
 
 #### WiFi Configuration
 
@@ -295,7 +363,7 @@ Configure stepper motor parameters for each axis:
 
 #### Saving Configuration
 
-1. Check **Modify Mode** to enable editing
+1. Check **Modify Mode** to enable editing.
 2. Make your changes
 3. Click **SAVE ALL SETTINGS & REBOOT**
 4. Controller will save to FRAM and restart
@@ -337,7 +405,7 @@ Configure stepper motor parameters for each axis:
 | `error: System Locked` | Controller in error state - restart required |
 | `error: Hard Limit` | Physical limit switch triggered |
 | `error: Soft Limit` | Software limit reached - adjust limits or position |
-| `error: Not homed` | Home position required for this operation |
+| `error: Not homed` | A home position must be set for this operation |
 
 ---
 

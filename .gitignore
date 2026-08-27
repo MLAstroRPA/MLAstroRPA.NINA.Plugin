@@ -1,6 +1,5 @@
 .vs/
-**/.vs/
-.vscode/
+**/.vs/ 
 
 bin/
 obj/
@@ -11,5 +10,6 @@ obj/
 *.suo
 *.userosscache
 *.sln.docstates
-
-Installer/
+Installer/Output/
+Installer/MSI/bin/
+Installer/MSI/obj/
