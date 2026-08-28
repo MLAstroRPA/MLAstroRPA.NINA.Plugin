@@ -11,7 +11,7 @@
 
   <!-- Define variables -->
   <?define ProductName = "MLAstro Robotic Polar Alignment" ?>
-  <?define ProductVersion = "2.0.0.4" ?>
+  <?define ProductVersion = "2.0.0.5" ?>
   <?define Manufacturer = "MLAstro" ?>
   <?define UpgradeCode = "8F3D9A2B-1C4E-4D5F-A6B7-8C9D0E1F2A3B" ?>
   <?define PluginFolderName = "MLAstro_Robotic_Polar_Alignment" ?>

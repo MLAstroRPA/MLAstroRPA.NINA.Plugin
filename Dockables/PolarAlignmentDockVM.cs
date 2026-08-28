@@ -2,9 +2,13 @@ using NINA.Equipment.Interfaces.ViewModel;
 using NINA.Profile.Interfaces;
 using NINA.WPF.Base.ViewModel;
 using NINA.Core.Utility;
+using NINA.Core.Utility.Notification;
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.ComponentModel.Composition;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -85,6 +89,14 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         // Flag to pause telemetry sync for alignment error fields when the user is editing
         private bool _isEditingAlignment = false;
 
+        // Alarm History (industrial HMI style): one row per driver error/warning code,
+        // showing the activation time and (once cleared) the end time on the SAME row.
+        private const int AlarmHistoryMaxEntries = 100;
+        private readonly ObservableCollection<DriverAlarm> _alarmHistory = new();
+        private bool _hasActiveErrors;
+        private bool _hasActiveWarnings;
+        private Visibility _alarmHistoryVisibility = Visibility.Collapsed;
+
         public override string ContentId => "MLAstro_Robotic_Polar_Alignment";
 
         #region Header Properties
@@ -130,6 +142,47 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         {
             get => _statusForeground;
             private set => SetProperty(ref _statusForeground, value);
+        }
+
+        /// <summary>
+        /// Industrial-HMI-style alarm history. Each row is a driver error/warning code that
+        /// became active at <see cref="DriverAlarm.ActivatedAt"/> and, once cleared, shows
+        /// the end time on the SAME row via <see cref="DriverAlarm.ClearedAt"/>.
+        /// </summary>
+        public ObservableCollection<DriverAlarm> AlarmHistory => _alarmHistory;
+
+        /// <summary>
+        /// True while at least one driver code is in ERROR state (value 2).
+        /// Disables manual/automatic movement while the system is error-locked.
+        /// </summary>
+        public bool HasActiveErrors
+        {
+            get => _hasActiveErrors;
+            private set
+            {
+                if (SetProperty(ref _hasActiveErrors, value))
+                {
+                    OnPropertyChanged(nameof(CanManualControl));
+                    OnPropertyChanged(nameof(CanAutomaticControl));
+                    OnPropertyChanged(nameof(CanAlign));
+                    CommandManager.InvalidateRequerySuggested();
+                }
+            }
+        }
+
+        /// <summary>
+        /// True while at least one driver code is in WARNING state (value 1).
+        /// </summary>
+        public bool HasActiveWarnings
+        {
+            get => _hasActiveWarnings;
+            private set => SetProperty(ref _hasActiveWarnings, value);
+        }
+
+        public Visibility AlarmHistoryVisibility
+        {
+            get => _alarmHistoryVisibility;
+            private set => SetProperty(ref _alarmHistoryVisibility, value);
         }
 
         public Brush ConnectionStatusColor
@@ -443,13 +496,13 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         /// Returns true while firmware telemetry reports manual movement or an idle state.
         /// Automated workflows own both axes and therefore disable every movement start control.
         /// </summary>
-        public bool CanManualControl => !_isAutomatedAdjustment && !IsAutomaticMotion;
+        public bool CanManualControl => !_isAutomatedAdjustment && !IsAutomaticMotion && !HasActiveErrors;
 
         /// <summary>
         /// Returns true only when the firmware reports both motors are idle.
         /// Manual MOVING telemetry permits manual control but prevents starting an automatic workflow.
         /// </summary>
-        public bool CanAutomaticControl => !_isAutomatedAdjustment && !IsMotionActive;
+        public bool CanAutomaticControl => !_isAutomatedAdjustment && !IsMotionActive && !HasActiveErrors;
 
         public bool CanAlign => CanAutomaticControl;
 
@@ -590,6 +643,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             _serialService.PropertyChanged += OnSerialServicePropertyChanged;
             _serialService.TelemetryDataReceived += OnTelemetryDataReceived;
             _serialService.CompletionReceived += OnCompletionReceived;
+            _serialService.ErrorStateChanged += OnErrorStateChanged;
 
             FirmwareVersion = _serialService.FirmwareVersion;
 
@@ -733,6 +787,105 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             }
         }
 
+        private void OnErrorStateChanged(object? sender, DriverErrorState state)
+        {
+            if (state == null)
+            {
+                return;
+            }
+
+            // Guard: event may be raised from a background thread; marshal to UI thread once.
+            if (Application.Current?.Dispatcher != null && !Application.Current.Dispatcher.CheckAccess())
+            {
+                Application.Current.Dispatcher.BeginInvoke(new Action(() => OnErrorStateChanged(sender, state)));
+                return;
+            }
+
+            // Codes currently active (value 1 = WARNING, 2 = ERROR)
+            var activeNow = new HashSet<string>(
+                state.Codes.Where(kv => kv.Value == 1 || kv.Value == 2).Select(kv => kv.Key),
+                StringComparer.OrdinalIgnoreCase);
+
+            // Close rows whose code is no longer active -> mark the END time on the same row
+            foreach (var row in _alarmHistory.Where(a => a.IsActive).ToList())
+            {
+                if (!activeNow.Contains(row.Code))
+                {
+                    row.ClearedAt = DateTime.Now;
+                }
+            }
+
+            // Add a new row for each code that just became active
+            foreach (var kv in state.Codes)
+            {
+                if (kv.Value != 1 && kv.Value != 2)
+                {
+                    continue;
+                }
+
+                // "Sys" is an aggregate indicator - skip it so we do not create a generic
+                // "System error" row next to the specific driver code that actually caused it.
+                if (kv.Key.Equals("Sys", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var alreadyActive = _alarmHistory.Any(a => a.Code.Equals(kv.Key, StringComparison.OrdinalIgnoreCase) && a.IsActive);
+                if (alreadyActive)
+                {
+                    continue;
+                }
+
+                var alarm = new DriverAlarm(kv.Key, DriverErrorState.Describe(kv.Key), kv.Value);
+                _alarmHistory.Add(alarm);
+                NotifyAlarm(alarm);
+            }
+
+            // Keep history bounded (trim oldest first)
+            while (_alarmHistory.Count > AlarmHistoryMaxEntries)
+            {
+                _alarmHistory.RemoveAt(0);
+            }
+
+            HasActiveErrors = state.HasErrors;
+            HasActiveWarnings = state.HasWarnings;
+            AlarmHistoryVisibility = _alarmHistory.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void NotifyAlarm(DriverAlarm alarm)
+        {
+            try
+            {
+                if (alarm.Severity == 2)
+                {
+                    Notification.ShowError($"MLAstro RPA: {alarm.Description}");
+                }
+                else
+                {
+                    Notification.ShowWarning($"MLAstro RPA: {alarm.Description}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[MLAstro] Failed to show alarm notification: {ex.Message}");
+            }
+        }
+
+        private void ClearAlarmHistory()
+        {
+            // Guard: may be called from a background thread (property-changed event)
+            if (Application.Current?.Dispatcher != null && !Application.Current.Dispatcher.CheckAccess())
+            {
+                Application.Current.Dispatcher.BeginInvoke(new Action(ClearAlarmHistory));
+                return;
+            }
+
+            _alarmHistory.Clear();
+            HasActiveErrors = false;
+            HasActiveWarnings = false;
+            AlarmHistoryVisibility = Visibility.Collapsed;
+        }
+
         private void OnSerialServicePropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(SerialConnectionService.IsConnected))
@@ -751,6 +904,11 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
 
         private void UpdateConnectionStatus()
         {
+            if (!_serialService.IsConnected)
+            {
+                ClearAlarmHistory();
+            }
+
             if (_serialService.IsConnected && _serialService.HandshakeStatus == "OK!")
             {
                 ConnectionStatusColor = Brushes.LimeGreen;
@@ -996,6 +1154,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                     _serialService.PropertyChanged -= OnSerialServicePropertyChanged;
                     _serialService.TelemetryDataReceived -= OnTelemetryDataReceived;
                     _serialService.CompletionReceived -= OnCompletionReceived;
+                    _serialService.ErrorStateChanged -= OnErrorStateChanged;
                 }
 
                 // Clear static instance

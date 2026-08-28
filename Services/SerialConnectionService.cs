@@ -102,6 +102,24 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         public event PropertyChangedEventHandler? PropertyChanged;
         public event EventHandler<TelemetryDataEventArgs>? TelemetryDataReceived;
         public event EventHandler<string>? CompletionReceived;
+        public event EventHandler<DriverErrorState>? ErrorStateChanged;
+
+        private DriverErrorState _errorState = DriverErrorState.Clean;
+
+        /// <summary>
+        /// Latest parsed snapshot of the firmware's dedicated "ERROR:..." telemetry line.
+        /// The firmware sends this line only when the error state changes (edge-triggered),
+        /// so each update here represents a real transition.
+        /// </summary>
+        public DriverErrorState ErrorState
+        {
+            get => _errorState;
+            private set
+            {
+                _errorState = value;
+                OnPropertyChanged();
+            }
+        }
 
         [ImportingConstructor]
         public SerialConnectionService(PluginSettings settings)
@@ -629,7 +647,24 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return;
             }
 
+            // Capture trước khi gọi bất kỳ method nào (tránh CS8602 do trình biên dịch reset null-state của field).
             var portName = _serialPort.PortName;
+
+            // Best-effort: gửi lệnh "Disconnect\n" cho firmware NGAY TRƯỚC khi đóng cổng, để thiết bị
+            // nhả handshake chủ động. Quan trọng khi Communication Watchdog TẮT (firmware không tự
+            // nhả handshake) — nếu không gửi, thiết bị sẽ giữ trạng thái "Serial control" vô thời hạn.
+            if (_serialPort?.IsOpen == true)
+            {
+                try
+                {
+                    Send("Disconnect\n");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"[MLAstro] Failed to send Disconnect command: {ex.Message}");
+                }
+            }
+
             DisconnectPortInstance();
             ConnectionStatus = "Disconnected";
             HandshakeStatus = string.Empty;
@@ -880,6 +915,18 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 return;
             }
 
+            // Bucket 1b: Error telemetry - the firmware's dedicated "ERROR:..." line (uppercase).
+            // MUST be checked BEFORE Bucket 2: the case-insensitive "error" match below would
+            // otherwise treat this telemetry as a failed command reply, dropping the error codes
+            // and falsely failing whatever command is pending.
+            if (line.StartsWith("ERROR:", StringComparison.Ordinal))
+            {
+                LogReceivedLine(line);
+                ProcessErrorTelemetry(line);
+                SignalAnyResponse();
+                return;
+            }
+
             // Bucket 2: Answer to a pending command
             if (line.StartsWith("ok", StringComparison.OrdinalIgnoreCase))
             {
@@ -911,6 +958,11 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             if (line.StartsWith("<"))
             {
                 Logger.Info($"[MLAstro] Telemetry received: {line.Substring(0, Math.Min(200, line.Length))}...");
+            }
+            else if (line.StartsWith("ERROR:", StringComparison.Ordinal))
+            {
+                // Dedicated error telemetry (not a command reply) - log as warning with the summary
+                Logger.Warning($"[MLAstro] Error telemetry: {line}");
             }
             else if (line.StartsWith("ok", StringComparison.OrdinalIgnoreCase))
             {
@@ -951,6 +1003,58 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         private void SignalAnyResponse()
         {
             lock (_responseSync) _anyResponseTcs?.TrySetResult(true);
+        }
+
+        /// <summary>
+        /// Parses the firmware's dedicated error telemetry line, e.g.
+        /// "ERROR:Sys:0,AzNC:2,AlNC:0,...Esc:0". Values are 0 = OK, 1 = WARNING, 2 = ERROR.
+        /// Raises <see cref="ErrorStateChanged"/> on every line (the firmware is edge-triggered).
+        /// </summary>
+        private void ProcessErrorTelemetry(string line)
+        {
+            try
+            {
+                var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var body = line.StartsWith("ERROR:", StringComparison.Ordinal) ? line.Substring("ERROR:".Length) : line;
+                foreach (var token in body.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var idx = token.IndexOf(':');
+                    if (idx <= 0)
+                    {
+                        continue;
+                    }
+
+                    var key = token.Substring(0, idx).Trim();
+                    var valueText = token.Substring(idx + 1).Trim();
+                    if (int.TryParse(valueText, out var value))
+                    {
+                        dict[key] = value;
+                    }
+                }
+
+                var state = new DriverErrorState(dict);
+                Logger.Info($"[MLAstro] Error telemetry parsed: {(state.HasErrors || state.HasWarnings ? state.Summary : "All clear")}");
+                ErrorState = state;
+                InvokeOnUiThread(() => ErrorStateChanged?.Invoke(this, state));
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[MLAstro] Error telemetry parse failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Resets the error state to clean (used on disconnect so stale errors do not survive a reconnect).
+        /// </summary>
+        private void ResetErrorState()
+        {
+            if (ErrorState.IsClean)
+            {
+                return;
+            }
+
+            ErrorState = DriverErrorState.Clean;
+            InvokeOnUiThread(() => ErrorStateChanged?.Invoke(this, ErrorState));
         }
 
         /// <summary>
@@ -1454,10 +1558,11 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         {
             InvokeOnUiThread(() =>
             {
-                TerminalEntries.Add(entry);
+                // Mới nhất lên ĐẦU (index 0), cũ nhất dần về CUỐI.
+                TerminalEntries.Insert(0, entry);
                 while (TerminalEntries.Count > MaxTerminalEntries)
                 {
-                    TerminalEntries.RemoveAt(0);
+                    TerminalEntries.RemoveAt(TerminalEntries.Count - 1); // bỏ entry cũ nhất (ở cuối)
                 }
             });
         }
@@ -1489,6 +1594,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             try
             {
                 ResetPendingHandshakeState();
+                ResetErrorState();
                 StopDeviceChangeWatcher();
 
                 if (_serialPort != null)
@@ -1923,6 +2029,19 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             _ => Brushes.Gray
         };
 
+        /// <summary>
+        /// Nhãn đánh dấu loại nội dung hiển thị ở đầu dòng:
+        /// TX: (Sent) / RX: (Received) / 🔔 (Connected &amp; Disconnected — thông báo, không phải TX/RX).
+        /// </summary>
+        public string Marker => EntryType switch
+        {
+            SerialTerminalEntryType.Sent => "TX: ",
+            SerialTerminalEntryType.Received => "RX: ",
+            SerialTerminalEntryType.Connected => "🔔 ",
+            SerialTerminalEntryType.Disconnected => "🔔 ",
+            _ => string.Empty
+        };
+
         public static SerialTerminalEntry Sent(byte[] payload, Encoding encoding, bool hexDisplay)
             => new(SerialTerminalEntryType.Sent, payload, null, encoding, hexDisplay);
 
@@ -2228,5 +2347,68 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             var cleaned = Regex.Replace(friendlyName, @"\s*\(COM\d+\)\s*$", string.Empty, RegexOptions.IgnoreCase).Trim();
             return string.IsNullOrWhiteSpace(cleaned) ? portName : $"{portName} - {cleaned}";
         }
+    }
+
+    /// <summary>
+    /// Parsed snapshot of the firmware's dedicated error telemetry line ("ERROR:...").
+    /// Each code maps to a value: 0 = OK, 1 = WARNING, 2 = ERROR.
+    /// </summary>
+    public class DriverErrorState
+    {
+        /// <summary>
+        /// A reusable clean (no errors, no warnings) state. Instance is immutable, so sharing is safe.
+        /// </summary>
+        public static DriverErrorState Clean { get; } = new DriverErrorState(new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase));
+
+        public DriverErrorState(IReadOnlyDictionary<string, int> codes)
+        {
+            Codes = codes;
+        }
+
+        public IReadOnlyDictionary<string, int> Codes { get; }
+
+        public bool IsClean => Codes.Values.All(v => v == 0);
+
+        public bool HasErrors => Codes.Values.Any(v => v == 2);
+
+        public bool HasWarnings => Codes.Values.Any(v => v == 1);
+
+        /// <summary>
+        /// Human-readable English summary of all non-zero codes, e.g. "AZ driver not responding [ERROR]; ALT over-temperature pre-warning [WARNING]".
+        /// Empty when clean.
+        /// </summary>
+        public string Summary
+        {
+            get
+            {
+                var parts = Codes
+                    .Where(kv => kv.Value != 0)
+                    .Select(kv => $"{Describe(kv.Key)} [{(kv.Value == 2 ? "ERROR" : "WARNING")}]");
+                return string.Join("; ", parts);
+            }
+        }
+
+        public static string Describe(string code) => code switch
+        {
+            "Sys" => "System error",
+            "AzNC" => "AZ driver not responding",
+            "AlNC" => "ALT driver not responding",
+            "AzOT" => "AZ over-temperature",
+            "AlOT" => "ALT over-temperature",
+            "AzPW" => "AZ over-temperature pre-warning",
+            "AlPW" => "ALT over-temperature pre-warning",
+            "AzSA" => "AZ short to ground A",
+            "AzSB" => "AZ short to ground B",
+            "AlSA" => "ALT short to ground A",
+            "AlSB" => "ALT short to ground B",
+            "AzOL" => "AZ open load",
+            "AlOL" => "ALT open load",
+            "AzHL" => "AZ hard limit",
+            "AlHL" => "ALT hard limit",
+            "AzSL" => "AZ soft limit stop",
+            "AlSL" => "ALT soft limit stop",
+            "Esc" => "Hard-limit escape mode",
+            _ => code
+        };
     }
 }

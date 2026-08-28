@@ -286,7 +286,7 @@ namespace MLAstro_Robotic_Polar_Alignment
                 }
 
                 state.LastVerticalOffset = state.TerminalScrollViewer.VerticalOffset;
-                state.ShouldAutoScroll = IsAtBottom(state.TerminalScrollViewer);
+                state.ShouldAutoScroll = IsAtTop(state.TerminalScrollViewer);
             };
 
             foreach (var entry in manifest.SerialTerminalEntries)
@@ -437,7 +437,7 @@ namespace MLAstro_Robotic_Polar_Alignment
                 }
 
                 paragraph.Inlines.Clear();
-                paragraph.Inlines.Add(new Run(entry.DisplayText));
+                paragraph.Inlines.Add(new Run(entry.Marker + entry.DisplayText));
                 paragraph.Margin = new Thickness(0);
                 paragraph.Foreground = entry.Foreground;
             });
@@ -465,7 +465,7 @@ namespace MLAstro_Robotic_Polar_Alignment
                 {
                     if (shouldAutoScroll)
                     {
-                        richTextBox.ScrollToEnd();
+                        richTextBox.ScrollToHome();
                     }
 
                     return;
@@ -483,14 +483,14 @@ namespace MLAstro_Robotic_Polar_Alignment
 
                 if (shouldAutoScroll)
                 {
-                    // Scroll to the newest content. Do NOT recompute ShouldAutoScroll here -
+                    // Dính ở ĐẦU (newest on top). Do NOT recompute ShouldAutoScroll here -
                     // it is only driven by the user's ScrollChanged handler, otherwise a
-                    // transient layout state can wrongly flip it off and push the view up.
-                    scrollViewer.ScrollToEnd();
+                    // transient layout state can wrongly flip it off and move the view.
+                    scrollViewer.ScrollToTop();
                 }
                 else
                 {
-                    // User scrolled away from the bottom: keep the current view still
+                    // User scrolled away from the top: keep the current view still
                     scrollViewer.ScrollToVerticalOffset(previousVerticalOffset);
                 }
             }
@@ -512,7 +512,7 @@ namespace MLAstro_Robotic_Polar_Alignment
                 return;
             }
 
-            var paragraph = new Paragraph(new Run(entry.DisplayText))
+            var paragraph = new Paragraph(new Run(entry.Marker + entry.DisplayText))
             {
                 Margin = new Thickness(0),
                 Foreground = entry.Foreground
@@ -556,14 +556,14 @@ namespace MLAstro_Robotic_Polar_Alignment
             state.OrderedEntries.Remove(entry);
         }
 
-        private static bool IsAtBottom(ScrollViewer scrollViewer)
+        private static bool IsAtTop(ScrollViewer scrollViewer)
         {
             if (scrollViewer == null)
             {
                 return true;
             }
 
-            return scrollViewer.VerticalOffset + scrollViewer.ViewportHeight >= scrollViewer.ExtentHeight - 1;
+            return scrollViewer.VerticalOffset <= 1;
         }
 
         private static T? FindDescendant<T>(DependencyObject? parent) where T : DependencyObject

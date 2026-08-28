@@ -501,6 +501,53 @@
                 </StackPanel>
             </Expander>
 
+            <!-- Alarm History (industrial HMI style): only ERROR/WARNING codes are shown; each row
+                 carries the activation time and, once cleared, the end time on the SAME row. -->
+            <Expander Header="⚠️ Alarm History" IsExpanded="True" Margin="0,0,0,10"
+                      Visibility="{Binding AlarmHistoryVisibility}">
+                <StackPanel Margin="6">
+                    <DataGrid ItemsSource="{Binding AlarmHistory}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              CanUserSortColumns="False"
+                              IsReadOnly="True"
+                              HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal"
+                              RowHeaderWidth="0"
+                              Background="#1E272E"
+                              Foreground="White"
+                              BorderBrush="#3A4654"
+                              BorderThickness="1"
+                              FontSize="12"
+                              MaxHeight="260">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="State" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StateText}"
+                                                   Foreground="{Binding StateBrush}"
+                                                   FontWeight="SemiBold"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Severity" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SeverityText}"
+                                                   Foreground="{Binding SeverityBrush}"
+                                                   FontWeight="SemiBold"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*"/>
+                            <DataGridTextColumn Header="Activated" Binding="{Binding ActivatedText}" Width="80"/>
+                            <DataGridTextColumn Header="Cleared" Binding="{Binding ClearedText}" Width="80"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Expander>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>
