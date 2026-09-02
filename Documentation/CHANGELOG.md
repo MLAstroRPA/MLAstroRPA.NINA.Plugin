@@ -5,6 +5,12 @@ All notable changes to the **MLAstro Robotic Polar Alignment** plugin for N.I.N.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **NINA 3.0+ compatibility (build)**: the plugin is now compiled against NINA **3.0.0.9001** using the official `NINA.Plugin` NuGet meta-package (replacing the hand-copied `Preference\` reference DLLs). Because NINA assemblies are non-strong-named, a plugin built against NINA 3.0 loads on NINA 3.0 / 3.1 / 3.2 / … without recompiling — fixing the `System.IO.FileNotFoundException: Could not load file or assembly 'NINA.Plugin / NINA.WPF.Base, Version=3.2.0.9001'` seen when the plugin (previously compiled against 3.2.0.9001) was run on an older NINA. `MinimumApplicationVersion` stays at `3.0.0.0`.
+- **Build system**: removed unused references (`NINA`, `NINA.CustomControlLibrary`, `NINA.MGEN`, `NINA.Plugins.PolarAlignment`, `CommunityToolkit.Mvvm`, `Nito.*`) and no longer needs the `Preference\NINA*.dll` folder; the output remains a single plugin DLL.
+
 ## [2.0.0.5] - 2026-08-28
 
 ### Added

@@ -39,6 +39,8 @@
 	</AssemblyAttribute>
 	<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
 	  <_Parameter1>MinimumApplicationVersion</_Parameter1>
+	  <!-- The plugin is compiled against NINA 3.0.0.9001 (the oldest supported 3.x) so it runs on NINA 3.0 and later.
+	       Keep this in sync with the NINA.Plugin PackageReference version below. -->
 	  <_Parameter2>3.0.0.0</_Parameter2>
 	</AssemblyAttribute>
 	<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
@@ -93,83 +95,25 @@
     <PackageReference Include="System.Management" Version="8.0.0" GeneratePathProperty="False" ExcludeAssets="runtime" />
   </ItemGroup>
 
-  <!-- Exclude runtimes folder from ALL output directories after every build step -->
+  <!-- Keep the output a single plugin DLL: remove the runtimes folder and any NINA/Nito/CommunityToolkit assemblies
+       NuGet may have copied into the output (NINA supplies them from its own app folder at runtime). -->
   <Target Name="ExcludeRuntimesFolder" AfterTargets="Build;Publish;CopyFilesToOutputDirectory" BeforeTargets="PostBuildEvent">
     <RemoveDir Directories="$(OutputPath)runtimes" Condition="Exists('$(OutputPath)runtimes')" />
     <RemoveDir Directories="$(OutDir)runtimes" Condition="Exists('$(OutDir)runtimes')" />
     <RemoveDir Directories="$(TargetDir)runtimes" Condition="Exists('$(TargetDir)runtimes')" />
-    <Message Importance="High" Text="[MLAstro] Removed runtimes folder from output" />
+    <Delete Files="$(TargetDir)NINA*.dll;$(TargetDir)Nito*.dll;$(TargetDir)CommunityToolkit*.dll;$(TargetDir)System.ComponentModel.Composition.dll" />
+    <Message Importance="High" Text="[MLAstro] Removed runtimes folder and NINA/dependency assemblies from output" />
   </Target>
 
+  <!-- NINA reference assemblies come from the official NuGet meta-package (same approach as the upstream TPPA plugin).
+       We compile against NINA 3.0.0.9001 - the oldest supported NINA 3.x. Because NINA assemblies are non-strong-named
+       (PublicKeyToken=null), the runtime binds them by simple name only -> a plugin built against NINA 3.0 loads on
+       NINA 3.0 / 3.1 / 3.2 / ... without recompiling. NINA supplies the NINA.* assemblies from its own app folder at
+       runtime, so ExcludeAssets="runtime" keeps the output a single plugin DLL (nothing NINA.* is copied to the plugin folder). -->
   <ItemGroup>
-    <Reference Include="CommunityToolkit.Mvvm">
-      <HintPath>Preference\CommunityToolkit.Mvvm.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA">
-      <HintPath>Preference\NINA.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Astrometry">
-      <HintPath>Preference\NINA.Astrometry.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Core">
-      <HintPath>Preference\NINA.Core.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.CustomControlLibrary">
-      <HintPath>Preference\NINA.CustomControlLibrary.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Equipment">
-      <HintPath>Preference\NINA.Equipment.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Image">
-      <HintPath>Preference\NINA.Image.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.MGEN">
-      <HintPath>Preference\NINA.MGEN.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.PlateSolving">
-      <HintPath>Preference\NINA.PlateSolving.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Plugin">
-      <HintPath>Preference\NINA.Plugin.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Plugins.PolarAlignment">
-      <HintPath>Preference\NINA.Plugins.PolarAlignment.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Profile">
-      <HintPath>Preference\NINA.Profile.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.Sequencer">
-      <HintPath>Preference\NINA.Sequencer.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="NINA.WPF.Base">
-      <HintPath>Preference\NINA.WPF.Base.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Nito.Mvvm.Async">
-      <HintPath>Preference\Nito.Mvvm.Async.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Nito.Mvvm.Core">
-      <HintPath>Preference\Nito.Mvvm.Core.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="System.ComponentModel.Composition">
-      <HintPath>Preference\System.ComponentModel.Composition.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
+    <PackageReference Include="NINA.Plugin" Version="3.0.0.9001" ExcludeAssets="runtime" />
+    <!-- MEF attributes ([Export] / [ImportingConstructor]) - compile-time only; resolved from the NINA app folder at runtime -->
+    <PackageReference Include="System.ComponentModel.Composition" Version="8.0.0" ExcludeAssets="runtime" />
   </ItemGroup>
 	
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent" DependsOnTargets="ExcludeRuntimesFolder">
@@ -186,7 +130,7 @@
 		<MakeDir Directories="$(PluginTargetDir)" Condition="!Exists('$(PluginTargetDir)')" />
 		<!-- Copy files -->
 		<ItemGroup>
-			<PluginFiles Include="$(TargetDir)**\*.*" Exclude="$(TargetDir)runtimes\**\*.*" />
+			<PluginFiles Include="$(TargetDir)**\*.*" Exclude="$(TargetDir)runtimes\**\*.*;$(TargetDir)*.runtimeconfig.json;$(TargetDir)*.deps.json" />
 		</ItemGroup>
 		<Copy SourceFiles="@(PluginFiles)" DestinationFolder="$(PluginTargetDir)\%(RecursiveDir)" />
 		<!-- Remove runtimes folder from target if it exists -->
