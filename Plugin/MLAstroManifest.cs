@@ -87,6 +87,11 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
 
         public bool IsSerialConnected => _serialConnectionService.IsConnected;
 
+        /// <summary>TPPA đang giữ quyền điều khiển -> khoá tab CONFIGURATION.</summary>
+        public bool IsExternalLocked => _serialConnectionService.IsExternalControlActive;
+
+        public bool IsExternalUnlocked => !IsExternalLocked;
+
         public string SerialConnectButtonText => IsSerialConnected ? "Disconnect" : "Connect";
 
         public bool IsHexDisplay
@@ -321,6 +326,11 @@ namespace MLAstro_Robotic_Polar_Alignment.Plugin
 
             Settings.PropertyChanged += OnSettingsPropertyChanged;
             _serialConnectionService.PropertyChanged += OnSerialConnectionServicePropertyChanged;
+            _serialConnectionService.AddExternalControlListener(_ =>
+            {
+                OnPropertyChanged(nameof(IsExternalLocked));
+                OnPropertyChanged(nameof(IsExternalUnlocked));
+            });
             RefreshComPorts();
 
             // Hook into application exit to ensure cleanup - must run on UI thread

@@ -5,7 +5,8 @@ param(
     [string]$Configuration = "Release",
     [string]$Version = "",
     [switch]$CreateRelease,
-    [string]$Repo = ""
+    [string]$Repo = "",
+    [string]$TPPAProjectDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +68,60 @@ if ($wxsContent -match '<\?define ProductVersion = "[^"]*" \?>') {
     Write-Host "Package.wxs ProductVersion updated to $Version" -ForegroundColor Green
 } else {
     Write-Host "WARNING: Could not find ProductVersion define in Package.wxs" -ForegroundColor Yellow
+}
+
+# ========== TPPA FORK VERSION SYNC ==========
+# Mỗi lần build MSI phiên bản mới, đẩy version đó sang fork TPPA: cập nhật marker
+# "MLAstroRPA version: X.Y.Z" (trong NINA.Plugins.PolarAlignment.csproj <Description> v.v.),
+# build lại TPPA (Release) và stage DLL mới vào Installer\MSI\Plugin\Three Point Polar Alignment
+# để MSI gói đúng bản TPPA mang version khớp với plugin MLAstro.
+if ([string]::IsNullOrWhiteSpace($TPPAProjectDir)) {
+    $TPPAProjectDir = Join-Path (Split-Path -Parent $ProjectRoot) "Three Point Polar Alignment - PULL-REQUEST\PolarAlignment"
+}
+
+$tppaProject = Join-Path $TPPAProjectDir "NINA.Plugins.PolarAlignment.csproj"
+if (Test-Path $tppaProject) {
+    Write-Host "Syncing MLAstroRPA version $Version into TPPA fork..." -ForegroundColor Yellow
+
+    # 1) Cập nhật marker "MLAstroRPA version:" trong mọi file nguồn TPPA còn chứa marker này
+    $versionMarkerPattern = 'MLAstroRPA version: \d+(\.\d+)+'
+    $tppaFiles = @(
+        $tppaProject,
+        (Join-Path $TPPAProjectDir "Properties\AssemblyInfo.cs")
+    )
+    foreach ($tppaFile in $tppaFiles) {
+        if (-not (Test-Path $tppaFile)) { continue }
+        $content = [System.IO.File]::ReadAllText($tppaFile)
+        $updated = [regex]::Replace($content, $versionMarkerPattern, "MLAstroRPA version: $Version")
+        if ($updated -ne $content) {
+            [System.IO.File]::WriteAllText($tppaFile, $updated, (New-Object System.Text.UTF8Encoding $false))
+            Write-Host "  Updated version marker in: $tppaFile" -ForegroundColor Green
+        }
+    }
+
+    # 2) Build lại TPPA (Release) để version mới nằm trong metadata của DLL
+    Write-Host "Building TPPA fork (Release)..." -ForegroundColor Yellow
+    Push-Location $TPPAProjectDir
+    try {
+        dotnet build $tppaProject -c Release -tl:off
+        if ($LASTEXITCODE -ne 0) {
+            throw "TPPA fork Release build failed - the MSI would package a stale TPPA DLL."
+        }
+    } finally {
+        Pop-Location
+    }
+
+    # 3) Stage DLL TPPA vừa build vào thư mục MSI harvest
+    $tppaDll = Join-Path $TPPAProjectDir "bin\Release\net8.0-windows7.0\NINA.Plugins.PolarAlignment.dll"
+    $tppaStaging = Join-Path $MSIProjectDir "Plugin\Three Point Polar Alignment"
+    if ((Test-Path $tppaDll) -and (Test-Path $tppaStaging)) {
+        Copy-Item -Path $tppaDll -Destination (Join-Path $tppaStaging "NINA.Plugins.PolarAlignment.dll") -Force
+        Write-Host "  Staged TPPA DLL into: $tppaStaging" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: TPPA DLL or staging folder not found - MSI may package a stale TPPA DLL." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "WARNING: TPPA fork project not found at $TPPAProjectDir - skipping TPPA version sync." -ForegroundColor Yellow
 }
 
 Write-Host ""

@@ -15,7 +15,8 @@
 
 	<!-- MSB3277: System.Text.Json 8.0 vs 9.0 conflict comes from the third-party NINA.PlateSolving.dll
 	     (it references System.Text.Json 9.0; net8.0 provides 8.0). Benign at runtime - unified to 8.0. -->
-	<NoWarn>$(NoWarn);MSB3277</NoWarn>
+	<!-- NU1701: ToastNotifications / VVVV.FreeImage chỉ có bản .NET Framework cũ (benign, qua NINA deps) -->
+	<NoWarn>$(NoWarn);MSB3277;NU1701</NoWarn>
 
 	<!-- Single-DLL output: skip .pdb debug symbols and .deps.json dependency manifest -->
 	<DebugType>none</DebugType>

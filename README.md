@@ -32,7 +32,7 @@ This plugin allows you to:
 ## System Requirements
 
 ### Software
-- **N.I.N.A** version 3.0 or later
+- **N.I.N.A** version 3.0 or later (the plugin is compiled against NINA **3.0.0.9001**, the oldest supported 3.x; because NINA supplies the NINA assemblies at runtime, a plugin built for 3.0 runs on NINA 3.0 / 3.1 / 3.2 / …)
 - **Windows 10/11** (64-bit)
 - **.NET 8.0 Runtime** or later
 

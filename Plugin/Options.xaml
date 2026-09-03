@@ -242,7 +242,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="CONFIGURATION">
+            <TabItem Header="CONFIGURATION" IsEnabled="{Binding IsExternalUnlocked}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
                               Loaded="OnOptionsScrollViewerLoaded"
                               PreviewMouseWheel="OnScrollViewerPreviewMouseWheel">

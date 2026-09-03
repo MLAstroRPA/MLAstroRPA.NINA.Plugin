@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using MLAstro_Robotic_Polar_Alignment.Dockables;
 using MLAstro_Robotic_Polar_Alignment.Plugin;
 using MLAstro_Robotic_Polar_Alignment.Services;
@@ -28,6 +29,7 @@ namespace MLAstro_Robotic_Polar_Alignment
         private TranslateTransform? _optionsHeaderTranslate;
         private TranslateTransform? _optionsTabHostTranslate;
         private double _headerTopInContent;
+        private ScrollViewer? _optionsOuterScrollViewer;
 
         private void OnOptionsRootLoaded(object sender, RoutedEventArgs e)
         {
@@ -58,6 +60,12 @@ namespace MLAstro_Robotic_Polar_Alignment
                 tabControl.Items.Insert(1, configurationTab);
             }
 
+            if (tabControl != null)
+            {
+                tabControl.SelectionChanged -= OnOptionsTabSelectionChanged;
+                tabControl.SelectionChanged += OnOptionsTabSelectionChanged;
+            }
+
             if (tabControl?.Template.FindName("HeaderHost", tabControl) is FrameworkElement tabHost)
             {
                 _optionsTabHost = tabHost;
@@ -72,6 +80,8 @@ namespace MLAstro_Robotic_Polar_Alignment
                 ?? FindAncestor<ScrollViewer>(root);
             if (scrollViewer != null)
             {
+                _optionsOuterScrollViewer = scrollViewer;
+
                 if (_optionsHeader != null)
                 {
                     // Distance from the top of the scroll content to the header (constant
@@ -111,6 +121,28 @@ namespace MLAstro_Robotic_Polar_Alignment
             {
                 _optionsTabHostTranslate.Y = y;
             }
+        }
+
+        private void OnOptionsTabSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.AddedItems.Count == 0 || e.AddedItems[0] is not TabItem tabItem)
+            {
+                return;
+            }
+
+            // Bring the view back to the top (HOME) of the newly selected tab: reset
+            // both the whole options page scroll (NINA's outer ScrollViewer) and the
+            // selected tab's own inner ScrollViewer, after layout has completed.
+            tabItem.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                if (!tabItem.IsSelected)
+                {
+                    return;
+                }
+
+                _optionsOuterScrollViewer?.ScrollToTop();
+                FindDescendant<ScrollViewer>(tabItem)?.ScrollToTop();
+            }));
         }
 
         private void OnScrollViewerPreviewMouseWheel(object sender, MouseWheelEventArgs e)

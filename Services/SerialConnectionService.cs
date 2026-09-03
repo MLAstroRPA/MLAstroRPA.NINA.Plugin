@@ -121,6 +121,214 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             }
         }
 
+        // =====================================================================
+        // Kết nối dùng chung cho plugin ngoài trong cùng process NINA (vd TPPA).
+        // MLAstro là CHỦ cổng COM duy nhất; plugin khác gọi qua API này để:
+        //   - EnsureExternalConnectedAsync(): mở cổng (auto-open) nếu chưa mở.
+        //   - Disconnect(): đóng cổng (đóng chung cho cả 2 phía).
+        //   - Send(text): ghi lệnh (dùng chung write-lock, không đứt giữa dòng).
+        //   - AddExternalLineListener / AddExternalStateListener: nhận dòng RX + trạng thái.
+        // (Dùng method + Action thay vì event thuần để plugin ngoài truy cập qua reflection dễ.)
+        // =====================================================================
+        private readonly object _txLock = new();               // khoá ghi tuần tự (MLAstro + plugin ngoài)
+        private readonly object _externalLock = new();
+        private readonly List<Action<string>> _externalLineListeners = new();
+        private readonly List<Action<bool>> _externalStateListeners = new();
+        private readonly List<Action<string>> _externalStopListeners = new();
+        private readonly List<Action<bool>> _externalControlListeners = new();
+        private bool _externalControlActive;    // true khi plugin ngoài (TPPA) đang GIỮ quyền điều khiển
+
+        /// <summary>Cổng COM đang cấu hình (chủ cổng = MLAstro dùng cấu hình này).</summary>
+        public string ConfiguredComPort => _settings.ComPort;
+
+        /// <summary>Baudrate đang cấu hình.</summary>
+        public int ConfiguredBaudRate => _settings.BaudRate;
+
+        /// <summary>Đăng ký nhận mọi dòng RX hoàn chỉnh (ok / error / &lt;telemetry&gt; / ERROR: / COMPLETED...).</summary>
+        public void AddExternalLineListener(Action<string> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock)
+            {
+                if (!_externalLineListeners.Contains(listener)) _externalLineListeners.Add(listener);
+            }
+        }
+
+        public void RemoveExternalLineListener(Action<string> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock) { _externalLineListeners.Remove(listener); }
+        }
+
+        /// <summary>Đăng ký nhận thay đổi trạng thái mở/đóng cổng (arg = IsConnected).</summary>
+        public void AddExternalStateListener(Action<bool> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock)
+            {
+                if (!_externalStateListeners.Contains(listener)) _externalStateListeners.Add(listener);
+            }
+        }
+
+        public void RemoveExternalStateListener(Action<bool> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock) { _externalStateListeners.Remove(listener); }
+        }
+
+        /// <summary>Tạm dừng poll "?" của MLAstro khi plugin ngoài (TPPA) đang chủ động điều khiển.</summary>
+        public void SetExternalPauseQuery(bool pause) => PauseQueryGlobal = pause;
+
+        /// <summary>Đang có plugin ngoài (TPPA) GIỮ quyền điều khiển -&gt; MLAstro khoá UI (trừ STOP/E-STOP + CONNECTION).</summary>
+        public bool IsExternalControlActive {
+            get { lock (_externalLock) return _externalControlActive; }
+        }
+
+        // --- Kênh STOP / trả quyền (giữa MLAstro và plugin ngoài TPPA) ---
+        public void AddExternalStopListener(Action<string> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock) { if (!_externalStopListeners.Contains(listener)) _externalStopListeners.Add(listener); }
+        }
+
+        public void RemoveExternalStopListener(Action<string> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock) { _externalStopListeners.Remove(listener); }
+        }
+
+        /// <summary>Đăng ký nhận thay đổi "quyền điều khiển ngoài" (arg = IsExternalControlActive) để khoá/mở khoá UI.</summary>
+        public void AddExternalControlListener(Action<bool> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock) { if (!_externalControlListeners.Contains(listener)) _externalControlListeners.Add(listener); }
+        }
+
+        public void RemoveExternalControlListener(Action<bool> listener)
+        {
+            if (listener == null) return;
+            lock (_externalLock) { _externalControlListeners.Remove(listener); }
+        }
+
+        /// <summary>
+        /// Bên MLAstro nhấn STOP/E-STOP giữa chừng (hoặc đang điều khiển ngoài):
+        /// báo plugin ngoài (TPPA) phải DỪNG PA ngay lập tức.
+        /// </summary>
+        public void NotifyExternalStop(string reason)
+        {
+            Logger.Info($"[MLAstro] NotifyExternalStop: {reason}");
+            RaiseExternalStop(reason);
+        }
+
+        /// <summary>
+        /// TPPA BẮT ĐẦU giữ quyền điều khiển: đảm bảo cổng mở (auto-open cho cả MLAstro),
+        /// đánh dấu đang điều khiển ngoài (MLAstro khoá UI) và tạm dừng poll "?" của MLAstro.
+        /// </summary>
+        public async Task<bool> BeginExternalControlAsync()
+        {
+            var ok = await EnsureExternalConnectedAsync().ConfigureAwait(false);
+            if (!ok) return false;
+            lock (_externalLock) _externalControlActive = true;
+            RaiseExternalControl(true);
+            PauseQueryGlobal = true;
+            return true;
+        }
+
+        /// <summary>
+        /// TPPA THẢ quyền điều khiển: KHÔNG đóng cổng - chỉ ngắt liên lạc điều khiển,
+        /// MLAstro nhận lại quyền (mở khoá UI) và poll "?" trở lại.
+        /// </summary>
+        public void EndExternalControl()
+        {
+            lock (_externalLock)
+            {
+                if (!_externalControlActive) return;
+                _externalControlActive = false;
+            }
+            RaiseExternalControl(false);
+            PauseQueryGlobal = false;
+            Logger.Info("[MLAstro] EndExternalControl: released control to local UI (port stays open).");
+        }
+
+        /// <summary>
+        /// Đảm bảo cổng đã mở (theo cấu hình MLAstro) cho plugin ngoài dùng.
+        /// Nếu MLAstro chưa mở thì mở luôn -&gt; cả 2 plugin cùng báo Connected.
+        /// </summary>
+        public async Task<bool> EnsureExternalConnectedAsync()
+        {
+            if (IsConnected) return true;
+            return await ConnectAsync(ConfiguredComPort, ConfiguredBaudRate).ConfigureAwait(false);
+        }
+
+        /// <summary>Ghi tuần tự qua write-lock (tránh 2 luồng ghi đè giữa dòng lệnh).</summary>
+        private void WriteBytes(byte[] data)
+        {
+            lock (_txLock)
+            {
+                _serialPort?.Write(data, 0, data.Length);
+            }
+        }
+
+        private void RaiseExternalLine(string line)
+        {
+            List<Action<string>>? copy = null;
+            lock (_externalLock)
+            {
+                if (_externalLineListeners.Count > 0) copy = _externalLineListeners.ToList();
+            }
+            if (copy == null) return;
+            foreach (var l in copy)
+            {
+                try { l(line); }
+                catch { /* plugin ngoài lỗi không làm ảnh hưởng MLAstro */ }
+            }
+        }
+
+        private void RaiseExternalState(bool connected)
+        {
+            List<Action<bool>>? copy = null;
+            lock (_externalLock)
+            {
+                if (_externalStateListeners.Count > 0) copy = _externalStateListeners.ToList();
+            }
+            if (copy == null) return;
+            foreach (var l in copy)
+            {
+                try { l(connected); }
+                catch { /* bỏ qua */ }
+            }
+        }
+
+        private void RaiseExternalStop(string reason)
+        {
+            List<Action<string>>? copy = null;
+            lock (_externalLock)
+            {
+                if (_externalStopListeners.Count > 0) copy = _externalStopListeners.ToList();
+            }
+            if (copy == null) return;
+            foreach (var l in copy)
+            {
+                try { l(reason); }
+                catch { /* bỏ qua */ }
+            }
+        }
+
+        private void RaiseExternalControl(bool active)
+        {
+            List<Action<bool>>? copy = null;
+            lock (_externalLock)
+            {
+                if (_externalControlListeners.Count > 0) copy = _externalControlListeners.ToList();
+            }
+            if (copy == null) return;
+            foreach (var l in copy)
+            {
+                try { l(active); }
+                catch { /* bỏ qua */ }
+            }
+        }
+
         [ImportingConstructor]
         public SerialConnectionService(PluginSettings settings)
         {
@@ -567,6 +775,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 StartConnectionCheckTimer();
                 StartDeviceChangeWatcher();
                 _ = StartHandshakeAndConnectionChecksAsync();
+                RaiseExternalState(true);
                 return true;
             }
             catch (Exception ex)
@@ -623,7 +832,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                     .Select(i => Convert.ToByte(normalizedHex.Substring(i * 2, 2), 16))
                     .ToArray();
 
-                _serialPort.Write(data, 0, data.Length);
+                WriteBytes(data);
                 AppendTerminalEntry(SerialTerminalEntry.Sent(data, _serialPort.Encoding, HexDisplay));
                 return true;
             }
@@ -638,6 +847,17 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         public void Disconnect()
         {
             _connectionCheckFailures = 0;
+
+            // Nếu có plugin ngoài (TPPA) đang GIỮ quyền: báo dừng PA + trả quyền về UI trước khi đóng cổng.
+            lock (_externalLock)
+            {
+                if (_externalControlActive)
+                {
+                    _externalControlActive = false;
+                    RaiseExternalControl(false);
+                    RaiseExternalStop("MLAstro disconnected");
+                }
+            }
 
             if (_serialPort == null)
             {
@@ -670,6 +890,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             HandshakeStatus = string.Empty;
             AppendTerminalEntry(SerialTerminalEntry.Disconnected($"Disconnected: {portName}"));
             OnPropertyChanged(nameof(IsConnected));
+            RaiseExternalState(false);
             Logger.Info($"[MLAstro] Serial disconnected: {portName}");
         }
 
@@ -720,7 +941,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             try
             {
                 var data = _serialPort.Encoding.GetBytes(text);
-                _serialPort.Write(data, 0, data.Length);
+                WriteBytes(data);
                 AppendTerminalEntry(SerialTerminalEntry.Sent(data, _serialPort.Encoding, HexDisplay));
 
                 // Log sent commands (exclude telemetry query for cleaner logs)
@@ -885,6 +1106,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                     if (line.Length > 0)
                     {
                         RouteLine(line);
+                        RaiseExternalLine(line);
                     }
                 }
                 _lineBuffer.Clear();
@@ -1301,7 +1523,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 }
 
                 var data = _serialPort.Encoding.GetBytes(text);
-                _serialPort.Write(data, 0, data.Length);
+                WriteBytes(data);
                 AppendTerminalEntry(SerialTerminalEntry.Sent(data, _serialPort.Encoding, HexDisplay));
 
                 var completedTask = await Task.WhenAny(pending.Task, Task.Delay(HandshakeTimeoutMilliseconds)).ConfigureAwait(false);
@@ -1353,7 +1575,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 }
 
                 var data = _serialPort.Encoding.GetBytes(text);
-                _serialPort.Write(data, 0, data.Length);
+                WriteBytes(data);
                 AppendTerminalEntry(SerialTerminalEntry.Sent(data, _serialPort.Encoding, HexDisplay));
 
                 var completedTask = await Task.WhenAny(any.Task, Task.Delay(HandshakeTimeoutMilliseconds)).ConfigureAwait(false);

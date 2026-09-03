@@ -490,21 +490,39 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         /// <summary>
         /// Returns true if Modify button should be enabled (not in automated mode)
         /// </summary>
-        public bool CanModify => !_isAutomatedAdjustment;
+        public bool CanModify => !_isAutomatedAdjustment && !IsExternalLocked;
 
         /// <summary>
         /// Returns true while firmware telemetry reports manual movement or an idle state.
         /// Automated workflows own both axes and therefore disable every movement start control.
         /// </summary>
-        public bool CanManualControl => !_isAutomatedAdjustment && !IsAutomaticMotion && !HasActiveErrors;
+        public bool CanManualControl => !_isAutomatedAdjustment && !IsAutomaticMotion && !HasActiveErrors && !IsExternalLocked;
 
         /// <summary>
         /// Returns true only when the firmware reports both motors are idle.
         /// Manual MOVING telemetry permits manual control but prevents starting an automatic workflow.
         /// </summary>
-        public bool CanAutomaticControl => !_isAutomatedAdjustment && !IsMotionActive && !HasActiveErrors;
+        public bool CanAutomaticControl => !_isAutomatedAdjustment && !IsMotionActive && !HasActiveErrors && !IsExternalLocked;
 
         public bool CanAlign => CanAutomaticControl;
+
+        /// <summary>TPPA (plugin ngoài) đang GIỮ quyền điều khiển -> khoá hầu hết điều khiển/cài đặt
+        /// (chỉ chừa nút STOP/E-STOP và tab CONNECTION).</summary>
+        public bool IsExternalLocked
+        {
+            get => _externalLocked;
+            private set
+            {
+                if (_externalLocked == value) return;
+                _externalLocked = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CanModify));
+                OnPropertyChanged(nameof(CanManualControl));
+                OnPropertyChanged(nameof(CanAutomaticControl));
+                OnPropertyChanged(nameof(CanAlign));
+            }
+        }
+        private bool _externalLocked;
 
         private bool IsAutomaticMotion => SystemStatus.Equals("HOMING", StringComparison.OrdinalIgnoreCase) ||
                           SystemStatus.Equals("ALIGNING", StringComparison.OrdinalIgnoreCase) ||
@@ -626,7 +644,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             MoveLeftCommand = new RelayCommand(_ => { });
             MoveRightCommand = new RelayCommand(_ => { });
             StopCommand = new RelayCommand(_ => StopAllMovement());
-            ForceStopCommand = new RelayCommand(_ => SendCommand("ESTOP:1\n"));
+            ForceStopCommand = new RelayCommand(_ => ForceStop());
             ResetErrorCommand = new RelayCommand(_ => SendCommand("ReER:1\n"));
 
             SetHomeCommand = new RelayCommand(_ => SendCommand("SetH:1\n"));
@@ -644,6 +662,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
             _serialService.TelemetryDataReceived += OnTelemetryDataReceived;
             _serialService.CompletionReceived += OnCompletionReceived;
             _serialService.ErrorStateChanged += OnErrorStateChanged;
+            // Khoá/mở khoá UI khi TPPA (plugin ngoài) giữ/thả quyền điều khiển.
+            _serialService.AddExternalControlListener(active => IsExternalLocked = active);
 
             FirmwareVersion = _serialService.FirmwareVersion;
 
@@ -1014,6 +1034,14 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
         {
             StopJogMovement();
             SendCommand("STOP:1\n");
+            // Nếu TPPA đang giữ quyền điều khiển (external control) thì báo TPPA dừng PA ngay.
+            if (_serialService.IsExternalControlActive) _serialService.NotifyExternalStop("MLAstro STOP pressed");
+        }
+
+        public void ForceStop()
+        {
+            SendCommand("ESTOP:1\n");
+            if (_serialService.IsExternalControlActive) _serialService.NotifyExternalStop("MLAstro E-STOP pressed");
         }
 
         public void StopJogMovement()

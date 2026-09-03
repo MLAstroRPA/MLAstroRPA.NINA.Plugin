@@ -426,8 +426,39 @@
                         </Grid>
                     </Border>
 
-                    <!-- Alt Error Input -->
+                    <!-- Az Error Input -->
                     <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="140"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Column="0" Grid.Row="0" Text="Az Error:" FontWeight="SemiBold" Margin="0,0,15,5"/>
+                        <WrapPanel Grid.Column="1" Grid.Row="0" Margin="0,0,20,5">
+                            <TextBox Text="{Binding AzErrorDeg, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,5,0" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
+                            <TextBlock Text="°" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBox Text="{Binding AzErrorMin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,5,0" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
+                            <TextBlock Text="'" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBox Text="{Binding AzErrorSec, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,5,0" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
+                            <TextBlock Text='"' VerticalAlignment="Center"/>
+                        </WrapPanel>
+                        <StackPanel Grid.Column="2" Grid.RowSpan="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,0">
+                            <TextBlock Text="Left" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <CheckBox IsChecked="{Binding AzErrorRight, Mode=TwoWay}" Style="{StaticResource DirectionToggleStyle}" VerticalAlignment="Center" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
+                            <TextBlock Text="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </StackPanel>
+                        <Button Grid.Column="3" Grid.RowSpan="2" Content="Align Az" Width="100" VerticalAlignment="Center" Command="{Binding AlignAzCommand}" IsEnabled="{Binding CanAlign}"/>
+                    </Grid>
+
+                    <Border Height="1" Background="#3A4654" Opacity="0.55" Margin="0,0,0,15"/>
+
+                    <!-- Alt Error Input -->
+                    <Grid Margin="0,0,0,15">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="150"/>
                             <ColumnDefinition Width="Auto"/>
@@ -456,37 +487,6 @@
                             <TextBlock Text="Down" HorizontalAlignment="Center" Margin="0,5,0,0"/>
                         </StackPanel>
                         <Button Grid.Column="3" Content="Align Alt" Width="100" VerticalAlignment="Center" Command="{Binding AlignAltCommand}" IsEnabled="{Binding CanAlign}"/>
-                    </Grid>
-
-                    <Border Height="1" Background="#3A4654" Opacity="0.55" Margin="0,0,0,15"/>
-
-                    <!-- Az Error Input -->
-                    <Grid Margin="0,0,0,15">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="140"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Column="0" Grid.Row="0" Text="Az Error:" FontWeight="SemiBold" Margin="0,0,15,5"/>
-                        <WrapPanel Grid.Column="1" Grid.Row="0" Margin="0,0,20,5">
-                            <TextBox Text="{Binding AzErrorDeg, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,5,0" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
-                            <TextBlock Text="°" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                            <TextBox Text="{Binding AzErrorMin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,5,0" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
-                            <TextBlock Text="'" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                            <TextBox Text="{Binding AzErrorSec, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="0,0,5,0" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
-                            <TextBlock Text='"' VerticalAlignment="Center"/>
-                        </WrapPanel>
-                        <StackPanel Grid.Column="2" Grid.RowSpan="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,0">
-                            <TextBlock Text="Left" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <CheckBox IsChecked="{Binding AzErrorRight, Mode=TwoWay}" Style="{StaticResource DirectionToggleStyle}" VerticalAlignment="Center" GotKeyboardFocus="OnAlignmentInputGotFocus"/>
-                            <TextBlock Text="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        </StackPanel>
-                        <Button Grid.Column="3" Grid.RowSpan="2" Content="Align Az" Width="100" VerticalAlignment="Center" Command="{Binding AlignAzCommand}" IsEnabled="{Binding CanAlign}"/>
                     </Grid>
 
                     <!-- Align All Button -->
