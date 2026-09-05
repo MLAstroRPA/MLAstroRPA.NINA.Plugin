@@ -944,10 +944,10 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 WriteBytes(data);
                 AppendTerminalEntry(SerialTerminalEntry.Sent(data, _serialPort.Encoding, HexDisplay));
 
-                // Log sent commands (exclude telemetry query for cleaner logs)
+                // Log sent commands at Debug level (exclude telemetry query) so NINA log stays clean
                 if (!text.Equals("?\n"))
                 {
-                    Logger.Info($"[MLAstro] Command sent: {text.TrimEnd('\r', '\n')}");
+                    Logger.Debug($"[MLAstro] Command sent: {text.TrimEnd('\r', '\n')}");
                 }
 
                 return true;
@@ -1179,7 +1179,8 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         {
             if (line.StartsWith("<"))
             {
-                Logger.Info($"[MLAstro] Telemetry received: {line.Substring(0, Math.Min(200, line.Length))}...");
+                // Nội dung telemetry chỉ log ở mức Debug để không làm ngập NINA log
+                Logger.Debug($"[MLAstro] Telemetry received: {line.Substring(0, Math.Min(200, line.Length))}...");
             }
             else if (line.StartsWith("ERROR:", StringComparison.Ordinal))
             {
@@ -1188,7 +1189,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
             }
             else if (line.StartsWith("ok", StringComparison.OrdinalIgnoreCase))
             {
-                Logger.Info("[MLAstro] OK response received");
+                Logger.Debug("[MLAstro] OK response received");
             }
             else if (line.StartsWith("error", StringComparison.OrdinalIgnoreCase))
             {
@@ -1706,14 +1707,14 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                                 ? bufferContent.Substring(startIdx, lineEndIdx - startIdx)
                                 : bufferContent.Substring(startIdx);
 
-                            Logger.Info($"[MLAstro] Processing telemetry line: {telemetryLine.Substring(0, Math.Min(100, telemetryLine.Length))}...");
+                            Logger.Debug($"[MLAstro] Processing telemetry line: {telemetryLine.Substring(0, Math.Min(100, telemetryLine.Length))}...");
 
                             // Parse telemetry and raise event
                             var telemetryData = ParseTelemetryLine(telemetryLine);
                             if (telemetryData != null)
                             {
-                                Logger.Info($"[MLAstro] Telemetry parsed - Status: {telemetryData.Status}, AzPos: {telemetryData.AzPosition}, AltPos: {telemetryData.AltPosition}");
-                                Logger.Info($"[MLAstro] Raising TelemetryDataReceived event (instance: {this.GetHashCode()}, subscribers: {TelemetryDataReceived?.GetInvocationList().Length ?? 0})");
+                                Logger.Debug($"[MLAstro] Telemetry parsed - Status: {telemetryData.Status}, AzPos: {telemetryData.AzPosition}, AltPos: {telemetryData.AltPosition}");
+                                Logger.Debug($"[MLAstro] Raising TelemetryDataReceived event (instance: {this.GetHashCode()}, subscribers: {TelemetryDataReceived?.GetInvocationList().Length ?? 0})");
                                 InvokeOnUiThread(() => TelemetryDataReceived?.Invoke(this, new TelemetryDataEventArgs(telemetryData)));
                             }
                             else
@@ -1733,7 +1734,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                                 {
                                     _applyingTelemetrySettings = false;
                                 }
-                                Logger.Info("[MLAstro] Telemetry data received and parsed");
+                                Logger.Debug("[MLAstro] Telemetry data received and parsed");
                             }
 
                             // Clear buffer after successful parse
@@ -1886,7 +1887,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
         {
             if (string.IsNullOrWhiteSpace(telemetryLine))
             {
-                Logger.Info("[MLAstro] ParseTelemetryLine: telemetryLine is null or empty");
+                Logger.Debug("[MLAstro] ParseTelemetryLine: telemetryLine is null or empty");
                 return null;
             }
 
@@ -1898,18 +1899,18 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
 
                 if (startIdx < 0 || endIdx < 0 || endIdx <= startIdx)
                 {
-                    Logger.Info($"[MLAstro] ParseTelemetryLine: Invalid format - startIdx={startIdx}, endIdx={endIdx}");
+                    Logger.Debug($"[MLAstro] ParseTelemetryLine: Invalid format - startIdx={startIdx}, endIdx={endIdx}");
                     return null;
                 }
 
                 var headerSection = telemetryLine.Substring(startIdx + 1, endIdx - startIdx - 1);
-                Logger.Info($"[MLAstro] ParseTelemetryLine: Header section = {headerSection}");
+                Logger.Debug($"[MLAstro] ParseTelemetryLine: Header section = {headerSection}");
 
                 var parts = headerSection.Split('|');
 
                 if (parts.Length < 2)
                 {
-                    Logger.Info($"[MLAstro] ParseTelemetryLine: Not enough parts - {parts.Length}");
+                    Logger.Debug($"[MLAstro] ParseTelemetryLine: Not enough parts - {parts.Length}");
                     return null;
                 }
 
@@ -1932,7 +1933,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 if (endIdx < telemetryLine.Length - 1)
                 {
                     var dataSection = telemetryLine.Substring(endIdx + 1);
-                    Logger.Info($"[MLAstro] ParseTelemetryLine: Data section length = {dataSection.Length}");
+                    Logger.Debug($"[MLAstro] ParseTelemetryLine: Data section length = {dataSection.Length}");
                     ParseDataSettings(dataSection, data);
                 }
 
@@ -1940,7 +1941,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 data.AzPosition = FormatDegreesToDMS(data.AzPositionDegrees);
                 data.AltPosition = FormatDegreesToDMS(data.AltPositionDegrees);
 
-                Logger.Info($"[MLAstro] ParseTelemetryLine: Parsed Status={data.Status}, AzPos={data.AzPosition}, AltPos={data.AltPosition}");
+                Logger.Debug($"[MLAstro] ParseTelemetryLine: Parsed Status={data.Status}, AzPos={data.AzPosition}, AltPos={data.AltPosition}");
 
                 return data;
             }
@@ -2015,7 +2016,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                     data.AltMovedPosition = FormatDegreesToDMS(altMoved);
                 }
 
-                Logger.Info($"[MLAstro] ParseMovedPosition: Az={data.AzMovedPosition}, Alt={data.AltMovedPosition}");
+                Logger.Debug($"[MLAstro] ParseMovedPosition: Az={data.AzMovedPosition}, Alt={data.AltMovedPosition}");
             }
             catch (Exception ex)
             {
@@ -2337,7 +2338,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                 var dataSection = telemetryData.Substring(startIndex + 1);
                 var parameters = dataSection.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
 
-                Logger.Info($"[MLAstro] Parsing {parameters.Length} parameters from telemetry");
+                Logger.Debug($"[MLAstro] Parsing {parameters.Length} parameters from telemetry");
 
                 foreach (var param in parameters)
                 {
@@ -2350,10 +2351,10 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                     var key = parts[0].Trim();
                     var value = parts[1].Trim();
 
-                    // Log WiFi-related parameters
+                    // Log WiFi-related parameters only at Debug level (no per-packet content in NINA log)
                     if (key.StartsWith("STA") || key.StartsWith("AP"))
                     {
-                        Logger.Info($"[MLAstro] WiFi param: {key} = {value}");
+                        Logger.Debug($"[MLAstro] WiFi param: {key} = {value}");
                     }
 
                     MapParameterToSettings(key, value, settings);
@@ -2531,7 +2532,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Services
                         break;
                     case "STAi":
                         settings.WifiIp = value;
-                        Logger.Info($"[MLAstro] STAi mapped: {value}");
+                        Logger.Debug($"[MLAstro] STAi mapped: {value}");
                         break;
                 }
             }

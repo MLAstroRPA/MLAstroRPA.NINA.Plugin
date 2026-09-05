@@ -678,7 +678,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                 return;
             }
 
-            Logger.Info($"[MLAstro] ViewModel received telemetry - Status: {e.Data.Status}, AzPos: {e.Data.AzPosition}");
+            Logger.Debug($"[MLAstro] ViewModel received telemetry - Status: {e.Data.Status}, AzPos: {e.Data.AzPosition}");
 
             // Update positions from home (AzPH/AlPH)
             AzPosition = e.Data.AzPosition;
@@ -702,7 +702,7 @@ namespace MLAstro_Robotic_Polar_Alignment.Dockables
                 _ => Brushes.White
             };
 
-            Logger.Info($"[MLAstro] ViewModel updated - SystemStatus: {SystemStatus}, StatusForeground: {StatusForeground}");
+            Logger.Debug($"[MLAstro] ViewModel updated - SystemStatus: {SystemStatus}, StatusForeground: {StatusForeground}");
 
             // Update current speed level (sync from hardware)
             if (e.Data.SpeedLevel > 0 && e.Data.SpeedLevel <= 5)

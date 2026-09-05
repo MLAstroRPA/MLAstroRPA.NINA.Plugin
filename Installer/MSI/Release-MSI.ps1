@@ -5,6 +5,7 @@ param(
     [string]$Configuration = "Release",
     [string]$Version = "",
     [switch]$CreateRelease,
+    [switch]$ReleaseOnly,
     [string]$Repo = "",
     [string]$TPPAProjectDir = ""
 )
@@ -21,6 +22,30 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "MLAstro RPA Plugin - MSI Builder" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
+
+# ========== RELEASE-ONLY MODE (no MSI build) ==========
+# The "GIT: Release Repo" task runs with -CreateRelease -ReleaseOnly. It does NOT build the MSI:
+# it asks for confirmation that the new-version MSI was already built (e.g. via ".NET Build MSI")
+# and then creates the GitHub release from the NEWEST MSI currently present in Output.
+if ($ReleaseOnly) {
+    if (-not $CreateRelease) {
+        Write-Host "ERROR: -ReleaseOnly can only be used together with -CreateRelease." -ForegroundColor Red
+        exit 1
+    }
+
+    $existingMsi = Get-ChildItem -Path $OutputDir -Filter "MLAstro_RPA_Plugin_*.msi" -ErrorAction SilentlyContinue |
+                   Sort-Object Name -Descending | Select-Object -First 1
+    if (-not $existingMsi -or $existingMsi.Name -notmatch 'MLAstro_RPA_Plugin_(\d+\.\d+\.\d+(\.\d+)?)\.msi') {
+        Write-Host "ERROR: No MSI found in Output ($OutputDir). Build the new version first with '.NET Build MSI'." -ForegroundColor Red
+        exit 1
+    }
+
+    $Version = $matches[1]
+    $msiDest = $existingMsi.FullName
+    Write-Host "Release-only mode - MSI build is SKIPPED." -ForegroundColor Yellow
+    Write-Host "Newest MSI in Output: v$Version ($(Split-Path $msiDest -Leaf))" -ForegroundColor Green
+    Write-Host ""
+}
 
 # ========== VERSION PUMP ==========
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -60,6 +85,11 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     Write-Host "Version set to: $Version" -ForegroundColor Green
 }
 
+# ========== BUILD / SYNC PHASES (SKIPPED when -ReleaseOnly) ==========
+# Package.wxs sync, plugin csproj sync, TPPA fork sync, WiX check and MSI build/copy only run
+# in build mode. In release-only mode the MSI is taken from Output as-is.
+if (-not $ReleaseOnly) {
+
 # Sync the ProductVersion define in Package.wxs with the chosen version
 $wxsContent = [System.IO.File]::ReadAllText($PackageWxs)
 if ($wxsContent -match '<\?define ProductVersion = "[^"]*" \?>') {
@@ -70,17 +100,61 @@ if ($wxsContent -match '<\?define ProductVersion = "[^"]*" \?>') {
     Write-Host "WARNING: Could not find ProductVersion define in Package.wxs" -ForegroundColor Yellow
 }
 
+# ========== PLUGIN PROJECT VERSION SYNC ==========
+# Cung cap version moi vao chinh project plugin MLAstro ma MSI nay dong goi
+# (<AssemblyVersion> / <FileVersion> trong MLAstro_Robotic_Polar_Alignment.csproj) de DLL
+# duoc build ra mang dung version khop voi MSI (Package.wxs + ten file Output).
+$pluginCsproj = Join-Path $ProjectRoot "MLAstro_Robotic_Polar_Alignment.csproj"
+if (Test-Path $pluginCsproj) {
+    # AssemblyVersion/FileVersion can du 4 phan; version 3 phan (vd 2.0.1) -> them ".0"
+    $fourPart = if ($Version -match '^\d+\.\d+\.\d+\.\d+$') { $Version } else { "$Version.0" }
+
+    $csprojContent = [System.IO.File]::ReadAllText($pluginCsproj)
+    $updatedContent = [regex]::Replace(
+        $csprojContent,
+        '<(?<tag>AssemblyVersion|FileVersion)>[^<]*</\k<tag>>',
+        { param($m) "<$($m.Groups['tag'].Value)>$fourPart</$($m.Groups['tag'].Value)>" })
+    if ($updatedContent -ne $csprojContent) {
+        [System.IO.File]::WriteAllText($pluginCsproj, $updatedContent, (New-Object System.Text.UTF8Encoding $false))
+        Write-Host "Plugin csproj version updated to ${fourPart}: $pluginCsproj" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: Khong tim thay <AssemblyVersion>/<FileVersion> trong plugin csproj" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "WARNING: Plugin project not found at $pluginCsproj - skipping plugin version sync." -ForegroundColor Yellow
+}
+
 # ========== TPPA FORK VERSION SYNC ==========
 # Mỗi lần build MSI phiên bản mới, đẩy version đó sang fork TPPA: cập nhật marker
 # "MLAstroRPA version: X.Y.Z" (trong NINA.Plugins.PolarAlignment.csproj <Description> v.v.),
-# build lại TPPA (Release) và stage DLL mới vào Installer\MSI\Plugin\Three Point Polar Alignment
+# build lại TPPA (Debug + Release) và stage DLL mới vào Installer\MSI\Plugin\Three Point Polar Alignment
 # để MSI gói đúng bản TPPA mang version khớp với plugin MLAstro.
-if ([string]::IsNullOrWhiteSpace($TPPAProjectDir)) {
-    $TPPAProjectDir = Join-Path (Split-Path -Parent $ProjectRoot) "Three Point Polar Alignment - PULL-REQUEST\PolarAlignment"
+#
+# LƯU Ý: repo TPPA ("Three Point Polar Alignment - PULL-REQUEST") là một repo RIÊNG nằm chung dưới
+# thư mục gốc "Code", KHÔNG nằm bên trong thư mục plugin - nên copy toàn bộ plugin qua nơi khác
+# (vd Public\) không mang repo TPPA theo. Nếu không truyền -TPPAProjectDir, script tự tìm repo TPPA
+# bằng cách đi lên dần từ thư mục plugin, nên hoạt động ở cả
+# ...\Code\MLAstroRPA.NINA.Plugin lẫn ...\Code\Public\Public.MLAstroRPA.NINA.Plugin.
+$tppaProject = $null
+if (-not [string]::IsNullOrWhiteSpace($TPPAProjectDir)) {
+    $tppaProject = Join-Path ([System.IO.Path]::GetFullPath($TPPAProjectDir)) "NINA.Plugins.PolarAlignment.csproj"
 }
-
-$tppaProject = Join-Path $TPPAProjectDir "NINA.Plugins.PolarAlignment.csproj"
-if (Test-Path $tppaProject) {
+if (-not $tppaProject -or -not (Test-Path $tppaProject)) {
+    $searchDir = $ProjectRoot
+    for ($i = 0; $i -lt 10; $i++) {
+        $probe = Join-Path $searchDir "Three Point Polar Alignment - PULL-REQUEST\PolarAlignment\NINA.Plugins.PolarAlignment.csproj"
+        if (Test-Path $probe) {
+            $TPPAProjectDir = Split-Path $probe -Parent
+            $tppaProject = $probe
+            Write-Host "Located TPPA fork project at: $tppaProject" -ForegroundColor Green
+            break
+        }
+        $parent = Split-Path $searchDir -Parent
+        if ($parent -eq $searchDir) { break }
+        $searchDir = $parent
+    }
+}
+if ($tppaProject -and (Test-Path $tppaProject)) {
     Write-Host "Syncing MLAstroRPA version $Version into TPPA fork..." -ForegroundColor Yellow
 
     # 1) Cập nhật marker "MLAstroRPA version:" trong mọi file nguồn TPPA còn chứa marker này
@@ -99,7 +173,38 @@ if (Test-Path $tppaProject) {
         }
     }
 
-    # 2) Build lại TPPA (Release) để version mới nằm trong metadata của DLL
+    # 2) Build Debug TPPA fork TRƯỚC (sau khi vừa sửa marker version): TPPA csproj có post-build
+    #    copy DLL vào thư mục NINA plugins + staging MSI của plugin MLAstro nên bản TPPA đang dùng
+    #    (Debug) sẽ khớp version marker vừa cập nhật.
+    Write-Host "Building TPPA fork (Debug)..." -ForegroundColor Yellow
+    Push-Location $TPPAProjectDir
+    try {
+        dotnet build $tppaProject -c Debug -tl:off
+        if ($LASTEXITCODE -ne 0) {
+            throw "TPPA fork Debug build failed."
+        }
+    } finally {
+        Pop-Location
+    }
+
+    # 3) SAU KHI TPPA Debug build xong mới build Debug plugin MLAstro (post-build sẽ copy plugin
+    #    vào thư mục NINA plugins để chạy/test cùng bản TPPA mới).
+    Write-Host "Building MLAstro plugin (Debug)..." -ForegroundColor Yellow
+    if (Test-Path $pluginCsproj) {
+        Push-Location $ProjectRoot
+        try {
+            dotnet build $pluginCsproj -c Debug -tl:off
+            if ($LASTEXITCODE -ne 0) {
+                throw "MLAstro plugin Debug build failed."
+            }
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Write-Host "WARNING: Plugin project not found at $pluginCsproj - skipping MLAstro Debug build." -ForegroundColor Yellow
+    }
+
+    # 4) Build lại TPPA (Release) để version mới nằm trong metadata của DLL đóng gói MSI
     Write-Host "Building TPPA fork (Release)..." -ForegroundColor Yellow
     Push-Location $TPPAProjectDir
     try {
@@ -111,7 +216,7 @@ if (Test-Path $tppaProject) {
         Pop-Location
     }
 
-    # 3) Stage DLL TPPA vừa build vào thư mục MSI harvest
+    # 5) Stage DLL TPPA (Release) vừa build vào thư mục MSI harvest
     $tppaDll = Join-Path $TPPAProjectDir "bin\Release\net8.0-windows7.0\NINA.Plugins.PolarAlignment.dll"
     $tppaStaging = Join-Path $MSIProjectDir "Plugin\Three Point Polar Alignment"
     if ((Test-Path $tppaDll) -and (Test-Path $tppaStaging)) {
@@ -121,7 +226,7 @@ if (Test-Path $tppaProject) {
         Write-Host "WARNING: TPPA DLL or staging folder not found - MSI may package a stale TPPA DLL." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "WARNING: TPPA fork project not found at $TPPAProjectDir - skipping TPPA version sync." -ForegroundColor Yellow
+    Write-Host "WARNING: TPPA fork project not found. Skipping TPPA version sync - the MSI may package a stale TPPA DLL. Pass -TPPAProjectDir to point to the TPPA PolarAlignment folder." -ForegroundColor Yellow
 }
 
 Write-Host ""
@@ -209,6 +314,8 @@ if ($msiSource) {
     exit 1
 }
 
+}  # ========== end of BUILD / SYNC PHASES (skipped when -ReleaseOnly) ==========
+
 # ========== GITHUB RELEASE (optional, enabled with -CreateRelease) ==========
 # Creates a new GitHub release v<version> on the repo and uploads:
 #   - the MSI
@@ -268,9 +375,16 @@ if ($CreateRelease) {
     }
 
     # Always confirm before publishing (guards against releasing to the wrong repo/version).
+    # In release-only mode the confirm states that the shown version is the newest in Output.
     Write-Host ""
-    Write-Host "Target GitHub repo: $Repo" -ForegroundColor Yellow
-    $confirm = Read-Host "Create release v$Version on '$Repo'? (y/N)"
+    Write-Host "Target GitHub repo: $Repo" -ForegroundColor Magenta
+    if ($ReleaseOnly) {
+        Write-Host "Version $Version is the newest MSI. Do you want to release it to GitHub ('$Repo')? (y/N)" -ForegroundColor Yellow -NoNewline
+        $confirm = Read-Host
+    } else {
+        Write-Host "Create release v$Version on '$Repo'? (y/N)" -ForegroundColor Yellow -NoNewline
+        $confirm = Read-Host
+    }
     if ($confirm -notmatch '^[yY]$') {
         Write-Host "Aborted by user." -ForegroundColor Yellow
         exit 0

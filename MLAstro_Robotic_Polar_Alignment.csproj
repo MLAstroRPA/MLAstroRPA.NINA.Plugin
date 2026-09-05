@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
 	<TargetFramework>net8.0-windows</TargetFramework>
@@ -25,8 +25,8 @@
 
 	<!-- Assembly Info for PluginBase -->
 	<AssemblyTitle>MLAstro Robotic Polar Alignment</AssemblyTitle>
-  <AssemblyVersion>2.0.0.1</AssemblyVersion>
-  <FileVersion>2.0.0.1</FileVersion>
+  <AssemblyVersion>2.0.0.7</AssemblyVersion>
+  <FileVersion>2.0.0.7</FileVersion>
 	<Company>MLAstro</Company>
 
 	<!-- Generate COM GUID for assembly - required by PluginBase for Identifier -->

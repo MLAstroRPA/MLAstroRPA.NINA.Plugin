@@ -2,11 +2,21 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"type": "dotnet",
-			"task": "build",
+			"type": "shell",
+			"label": "dotnet: build",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"${workspaceFolder}/MLAstro_Robotic_Polar_Alignment.csproj",
+				"-c",
+				"Release",
+				"-tl:off"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
 			"group": "build",
-			"problemMatcher": [],
-			"label": "dotnet: build"
+			"problemMatcher": []
 		},
 		{
 			"type": "shell",
@@ -28,7 +38,7 @@
 		{
 			"type": "shell",
 			"label": "GIT: Release Repo",
-			"detail": "Build + MSI, then create a GitHub release v<version> and upload Installer/MSI/Plugin files.",
+			"detail": "No MSI build. Confirms the new MSI was already built (.NET Build MSI), then creates a GitHub release from the newest MSI in Output and uploads Installer/MSI/Plugin files.",
 			"command": "powershell",
 			"args": [
 				"-NoProfile",
@@ -36,7 +46,8 @@
 				"Bypass",
 				"-File",
 				"${workspaceFolder}/Installer/MSI/Release-MSI.ps1",
-				"-CreateRelease"
+				"-CreateRelease",
+				"-ReleaseOnly"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}"
